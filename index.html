@@ -48,6 +48,12 @@
         </button>
       </form>
     </div>
+
+    <div class="login-corner-meta" id="login-corner-meta">
+      <span id="app-version-indicator" class="app-version-indicator">v1.0.0</span>
+      <span class="meta-dot-divider" aria-hidden="true">•</span>
+      <button type="button" id="btn-open-disclaimer" class="disclaimer-link-btn">Disclaimer</button>
+    </div>
   </div>
 
   <!-- Mandatory Startup Screen with Stepper Animation -->
@@ -631,6 +637,36 @@
       <div class="modal-footer" id="confirm-modal-footer">
         <button type="button" class="btn btn-secondary" id="btn-cancel-confirm">Cancel</button>
         <button type="button" class="btn btn-primary" id="btn-ok-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disclaimer Modal Dialog -->
+  <div id="disclaimer-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="disclaimer-modal-title">
+    <div class="modal-dialog modal-dialog-md">
+      <div class="modal-header">
+        <h3 class="modal-title" id="disclaimer-modal-title">Disclaimer</h3>
+        <button type="button" class="btn btn-ghost btn-icon" id="btn-close-disclaimer-modal" aria-label="Close dialog (Esc)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body disclaimer-modal-body">
+        <p class="disclaimer-intro">This Task Manager is an internal tool built for small team use.<br>It is provided as-is, without warranty of any kind, express or implied.</p>
+        <ul class="disclaimer-list">
+          <li>This tool is not an official company system and is not guaranteed to be available, accurate, or error-free.</li>
+          <li>Task data is stored in a connected Google Sheet. Users are responsible for the accuracy of what they enter.</li>
+          <li>Access is limited to team members with a valid name and PIN. Do not share your PIN with others.</li>
+          <li>This app has basic security measures but is not built to enterprise-grade security standards. Do not use it to store confidential, financial, or sensitive personal information.</li>
+          <li>The creator(s) of this tool are not liable for any data loss, miscommunication, or decisions made based on information in this app.</li>
+          <li>This tool may be updated, changed, or discontinued at any time without notice.</li>
+        </ul>
+        <p class="disclaimer-outro">By using this app, you agree to these terms.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-close-disclaimer-bottom">Close</button>
       </div>
     </div>
   </div>
