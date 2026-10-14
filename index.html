@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>Team Task Manager</title>
+  <link rel="preconnect" href="https://script.google.com">
+  <link rel="preconnect" href="https://script.googleusercontent.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanuman:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="style.css?v=2.3">
+</head>
+<body>
+  <!-- Clean Login Screen -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-badge">
+          <svg class="icon icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        <h1 class="login-title">Team Task Manager</h1>
+        <p class="login-subtitle">Sign in to access your workspace</p>
+      </div>
+
+      <form id="login-form" class="login-form" novalidate>
+        <div class="form-group">
+          <label for="username">Your Name</label>
+          <input type="text" name="username" id="username" class="form-input" placeholder="Enter your name" required autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <span class="field-error" id="login-name-error"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="password">PIN Code</label>
+          <input type="password" name="password" id="password" class="form-input" placeholder="Enter your PIN" required autocomplete="current-password" inputmode="numeric">
+          <span class="field-error" id="login-pin-error"></span>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" id="btn-login">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Mandatory Startup Screen with Stepper Animation -->
+  <div id="startup-screen" class="startup-screen hidden" role="status" aria-busy="true">
+    <div class="startup-card">
+      <div class="startup-header">
+        <h1 class="startup-title">Team Task Manager</h1>
+        <div class="startup-subtitle">BRINGING DATA TO YOU</div>
+      </div>
+
+      <div class="startup-stepper" aria-hidden="true">
+        <!-- Step 1: Your Device -->
+        <div class="stepper-step" id="step-node-1" data-step="1">
+          <div class="step-tile">
+            <svg class="icon icon-tile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="4" y="2" width="16" height="20" rx="2" ry="2"/>
+              <line x1="12" y1="18" x2="12.01" y2="18"/>
+            </svg>
+          </div>
+          <span class="step-label">YOUR DEVICE</span>
+        </div>
+
+        <!-- Connector 1 -->
+        <div class="step-connector" id="connector-1">
+          <div class="travel-dot" id="travel-dot-1"></div>
+        </div>
+
+        <!-- Step 2: Cloud Data -->
+        <div class="stepper-step" id="step-node-2" data-step="2">
+          <div class="step-tile">
+            <svg class="icon icon-tile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+          </div>
+          <span class="step-label">CLOUD DATA</span>
+        </div>
+
+        <!-- Connector 2 -->
+        <div class="step-connector" id="connector-2">
+          <div class="travel-dot" id="travel-dot-2"></div>
+        </div>
+
+        <!-- Step 3: Dashboard -->
+        <div class="stepper-step" id="step-node-3" data-step="3">
+          <div class="step-tile">
+            <svg class="icon icon-tile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <span class="step-label">DASHBOARD</span>
+        </div>
+      </div>
+
+      <div class="startup-status" id="startup-status" aria-live="polite">
+        Just a minute…
+      </div>
+
+      <!-- Startup Error State -->
+      <div class="startup-error-box hidden" id="startup-error-box">
+        <p class="startup-error-msg" id="startup-error-msg">Unable to connect to Google Sheets backend.</p>
+        <div class="startup-error-actions">
+          <button type="button" class="btn btn-secondary" id="btn-startup-logout">Log Out</button>
+          <button type="button" class="btn btn-primary" id="btn-startup-retry">Try Again</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main 3-Column Desktop Application Layout -->
+  <div id="app-container" class="app-container hidden">
+
+    <!-- 1. Left Panel: People & Views (240px) -->
+    <aside class="panel panel-people" id="panel-people">
+      <div class="panel-header brand-header">
+        <div class="brand-info">
+          <div class="brand-logo">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="3"/>
+              <path d="M9 3v18"/>
+              <path d="M15 9h6"/>
+              <path d="M15 15h6"/>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">TeamTasks</span>
+            <span class="brand-tag">Workspace</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-content people-content">
+        <!-- Main Views -->
+        <div class="nav-section">
+          <button type="button" class="person-nav-item active" id="filter-all" data-filter-type="ALL">
+            <div class="person-nav-left">
+              <span class="nav-icon-wrapper">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 6h16M4 12h16M4 18h16"/>
+                </svg>
+              </span>
+              <span class="person-name">All Tasks</span>
+            </div>
+            <span class="count-badge" id="count-all">0</span>
+          </button>
+        </div>
+
+        <!-- Team Members Section -->
+        <div class="nav-section">
+          <div class="section-title">Team Members</div>
+          <div class="members-nav-list" id="members-nav-list">
+            <!-- Populated dynamically via DataService -->
+          </div>
+          <div class="empty-hint hidden" id="members-empty-state">
+            No team members loaded
+          </div>
+        </div>
+
+        <!-- Workflow States Section -->
+        <div class="nav-section">
+          <div class="section-title">Views</div>
+          <button type="button" class="person-nav-item" id="filter-completed" data-filter-type="STATE" data-state="Completed">
+            <div class="person-nav-left">
+              <span class="nav-icon-wrapper">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                  <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+              </span>
+              <span class="person-name">Completed</span>
+            </div>
+            <span class="count-badge" id="count-completed">0</span>
+          </button>
+
+          <button type="button" class="person-nav-item" id="filter-archived" data-filter-type="STATE" data-state="Archived">
+            <div class="person-nav-left">
+              <span class="nav-icon-wrapper">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="21 8 21 21 3 21 3 8"/>
+                  <rect x="1" y="3" width="22" height="5"/>
+                  <line x1="10" y1="12" x2="14" y2="12"/>
+                </svg>
+              </span>
+              <span class="person-name">Archive</span>
+            </div>
+            <span class="count-badge" id="count-archived">0</span>
+          </button>
+
+          <button type="button" class="person-nav-item" id="btn-open-manage-statuses">
+            <div class="person-nav-left">
+              <span class="nav-icon-wrapper">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 20h9"/>
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                </svg>
+              </span>
+              <span class="person-name">Statuses</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-footer current-user-footer">
+        <div class="user-profile-badge">
+          <div class="user-meta">
+            <span class="user-name" id="current-user-name">-</span>
+            <span class="user-role">Active Member</span>
+          </div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-logout" title="Sign out">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          <span>Sign Out</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 2. Middle Panel: Task List (380px to 440px) -->
+    <main class="panel panel-tasks" id="panel-tasks">
+      <div class="panel-header tasks-header">
+        <div class="tasks-header-left">
+          <div class="view-meta">
+            <h2 class="view-title" id="current-view-title">All Tasks</h2>
+            <span class="view-count" id="view-task-count">0 tasks</span>
+          </div>
+        </div>
+        <div class="tasks-header-actions">
+          <div class="sync-indicator" id="sync-indicator" title="Sync status with Google Sheets">
+            <span class="sync-dot" id="sync-dot"></span>
+            <span class="sync-status-text" id="sync-status-text">Synced</span>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-open-new-task" title="Create task (Ctrl+N)">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            <span>New Task</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="search-bar-container">
+        <div class="search-input-wrapper">
+          <input type="text" id="task-search-input" class="search-input" placeholder="Search" aria-label="Search">
+          <button type="button" id="btn-clear-search" class="clear-search-btn hidden" aria-label="Clear search">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="search-summary-bar hidden" id="search-summary-bar"></div>
+      </div>
+
+      <div class="panel-content tasks-content-area" id="tasks-scroll-container">
+        <!-- Empty State -->
+        <div class="empty-state hidden" id="tasks-empty-state">
+          <div class="empty-icon-box">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+          </div>
+          <h3 class="empty-title" id="tasks-empty-title">No tasks yet</h3>
+          <p class="empty-desc" id="tasks-empty-desc">Click New Task to start.</p>
+        </div>
+
+        <!-- Task rows list -->
+        <div class="task-items-list" id="task-items-list">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+    </main>
+
+    <!-- 3. Right Panel: Task Details (Fluid) -->
+    <section class="panel panel-details" id="panel-details" aria-label="Task Details">
+      <!-- Empty State -->
+      <div class="details-empty-state" id="details-empty-state">
+        <div class="empty-state">
+          <div class="empty-icon-box">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+              <polyline points="10 17 15 12 10 7"/>
+              <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+          </div>
+          <h3 class="empty-title">No task selected</h3>
+          <p class="empty-desc">Select a task from the list to view deliverables, timeline, and history.</p>
+        </div>
+      </div>
+
+      <!-- Selected Task Content -->
+      <div class="details-content hidden" id="details-content">
+        <div class="panel-header details-header">
+          <div class="details-title-row">
+            <span class="status-badge" id="detail-status-badge">Register</span>
+            <span class="deadline-pill hidden" id="detail-overdue-pill">Overdue</span>
+          </div>
+          <div class="details-header-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-mark-complete" title="Mark task completed">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+              <span>Complete</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-mark-archive" title="Archive task">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="21 8 21 21 3 21 3 8"/>
+                <rect x="1" y="3" width="22" height="5"/>
+                <line x1="10" y1="12" x2="14" y2="12"/>
+              </svg>
+              <span>Archive</span>
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-delete-task" title="Delete task">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              <span>Delete</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="panel-content details-scroll-area">
+          <div class="details-hero">
+            <h1 class="details-task-name" id="detail-task-name">-</h1>
+          </div>
+
+          <div class="meta-card">
+            <div class="meta-grid">
+              <div class="meta-item">
+                <span class="meta-label">Assignee</span>
+                <div class="meta-value" id="detail-assignee">
+                  <span id="detail-assignee-name">-</span>
+                </div>
+              </div>
+
+              <div class="meta-item">
+                <span class="meta-label">Deadline</span>
+                <div class="meta-value" id="detail-deadline-wrapper">
+                  <svg class="icon meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/>
+                    <line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
+                  </svg>
+                  <span id="detail-deadline-text">-</span>
+                </div>
+              </div>
+
+              <div class="meta-item">
+                <span class="meta-label">Created By</span>
+                <div class="meta-value" id="detail-created-by">-</div>
+              </div>
+
+              <div class="meta-item">
+                <span class="meta-label">Created At</span>
+                <div class="meta-value" id="detail-created-at">-</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <h3 class="section-heading">Description</h3>
+            <div class="description-box" id="detail-description">-</div>
+          </div>
+
+          <!-- Status update form -->
+          <div class="detail-section update-section">
+            <h3 class="section-heading">Update Status</h3>
+            <form id="status-update-form" class="update-form">
+              <div class="form-row">
+                <div class="form-group flex-1">
+                  <div class="label-with-action">
+                    <label for="update-status-trigger">New Status</label>
+                    <button type="button" class="btn-text-action" id="btn-manage-statuses-link" title="Manage workflow statuses">Edit List</button>
+                  </div>
+                  <div class="custom-select-wrapper" id="update-status-wrapper">
+                    <select id="update-status-select" class="visually-hidden" tabindex="-1" aria-hidden="true">
+                      <!-- Populated dynamically from statuses array -->
+                    </select>
+                    <button type="button" class="custom-select-trigger" id="update-status-trigger" aria-haspopup="listbox" aria-expanded="false">
+                      <span class="custom-select-label" id="update-status-label">Register</span>
+                      <svg class="custom-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"/>
+                      </svg>
+                    </button>
+                    <div class="custom-select-menu hidden" id="update-status-menu" role="listbox">
+                      <!-- Populated dynamically matching website UI -->
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="update-note-input">Optional Note / Reason</label>
+                <textarea id="update-note-input" class="form-input form-textarea" rows="2" placeholder="Add context for this status change..."></textarea>
+              </div>
+
+              <div class="update-actions">
+                <button type="button" class="btn btn-primary" id="btn-submit-status-update">
+                  Update Status
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- History timeline -->
+          <div class="detail-section timeline-section">
+            <h3 class="section-heading">Activity History</h3>
+            <div class="timeline-list" id="detail-timeline-list">
+              <!-- Populated dynamically -->
+            </div>
+            <div class="empty-hint hidden" id="history-empty-state">
+              No history recorded
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Centered New Task Modal (520px wide) -->
+  <div id="new-task-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-heading">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-heading">Create New Task</h3>
+        <button type="button" class="btn btn-ghost btn-icon" id="btn-close-modal" aria-label="Close dialog (Esc)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <form id="new-task-form" novalidate>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="task-name-input">
+              Task Name <span class="required-star">*</span>
+            </label>
+            <input type="text" id="task-name-input" class="form-input" placeholder="Task name" required>
+            <span class="field-error" id="task-name-error"></span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="task-assignee-input">
+                Assigned To <span class="required-star">*</span>
+              </label>
+              <select id="task-assignee-input" class="form-input" required>
+                <!-- Populated dynamically with active team members -->
+              </select>
+              <span class="field-error" id="task-assignee-error"></span>
+            </div>
+
+            <div class="form-group flex-1">
+              <label for="task-deadline-input">
+                Deadline <span class="required-star">*</span> <span class="label-hint">(2 weeks selected)</span>
+              </label>
+              <input type="date" id="task-deadline-input" class="form-input" required>
+              <span class="field-error" id="task-deadline-error"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="task-desc-input">
+              Description <span class="required-star">*</span>
+            </label>
+            <textarea id="task-desc-input" class="form-input form-textarea" rows="4" placeholder="Add specific objectives, deliverables, or relevant notes..." required></textarea>
+            <span class="field-error" id="task-desc-error"></span>
+          </div>
+
+          <div class="info-callout">
+            <svg class="icon info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Initial status is registered as <strong>Register</strong> and stamped with your profile.</span>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-modal">
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary" id="btn-save-task">
+            Create Task
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Right-Click Task Context Menu -->
+  <div id="task-context-menu" class="context-menu hidden">
+    <button type="button" class="context-menu-item" id="ctx-open-task">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+        <polyline points="10 17 15 12 10 7"/>
+        <line x1="15" y1="12" x2="3" y2="12"/>
+      </svg>
+      <span>Open Task</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-change-status">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+      </svg>
+      <span>Change Status</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" id="ctx-mark-complete">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      <span>Mark Complete</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-mark-archive">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="21 8 21 21 3 21 3 8"/>
+        <rect x="1" y="3" width="22" height="5"/>
+        <line x1="10" y1="12" x2="14" y2="12"/>
+      </svg>
+      <span>Archive</span>
+    </button>
+    <button type="button" class="context-menu-item" id="ctx-delete-task">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+      </svg>
+      <span>Delete Task</span>
+    </button>
+  </div>
+
+  <!-- Undo Toast Container -->
+  <div id="undo-toast" class="undo-toast hidden" role="status" aria-live="polite">
+    <span class="undo-toast-message" id="undo-toast-message">Task state updated</span>
+    <button type="button" class="btn btn-secondary btn-sm" id="btn-undo-toast">Undo</button>
+  </div>
+
+  <!-- Manage Statuses Modal (About 480px wide) -->
+  <div id="manage-statuses-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="statuses-modal-heading">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="statuses-modal-heading">Workflow Statuses</h3>
+        <button type="button" class="btn btn-ghost btn-icon" id="btn-close-statuses-modal" aria-label="Close dialog (Esc)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <form id="add-status-form" class="add-status-form" novalidate>
+          <div class="form-row">
+            <div class="form-group flex-1" style="margin-bottom: 0;">
+              <input type="text" id="new-status-input" class="form-input" placeholder="New status name (e.g. In Testing)" required>
+            </div>
+            <button type="submit" class="btn btn-primary" id="btn-add-status">
+              Add
+            </button>
+          </div>
+          <span class="field-error" id="add-status-error"></span>
+        </form>
+
+        <div class="statuses-manage-container">
+          <div class="section-heading" style="margin-top: 14px; margin-bottom: 8px;">Current Statuses</div>
+          <div class="statuses-manage-list" id="statuses-manage-list">
+            <!-- Populated dynamically with each status and edit/delete actions -->
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-done-statuses-modal">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Website Unified Confirmation / Alert Modal Dialog -->
+  <div id="confirm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div class="modal-dialog modal-dialog-sm">
+      <div class="modal-header">
+        <h3 class="modal-title" id="confirm-modal-title">Confirmation</h3>
+        <button type="button" class="btn btn-ghost btn-icon" id="btn-close-confirm-modal" aria-label="Close dialog (Esc)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="confirm-modal-content">
+          <div class="confirm-modal-icon-wrap" id="confirm-modal-icon-wrap">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div class="confirm-modal-text">
+            <h4 class="confirm-modal-headline" id="confirm-modal-headline">Are you sure?</h4>
+            <p class="confirm-modal-message" id="confirm-modal-message">Do you want to proceed with this action?</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" id="confirm-modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-confirm">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-ok-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.js" defer></script>
+  <script src="app.js?v=3.0" defer></script>
+</body>
+</html>
