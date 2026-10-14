@@ -1325,6 +1325,13 @@
       if (isCreator) {
         el.detailPrivacyToggleWrapper.classList.remove('hidden');
         el.detailShareTeamCheckbox.checked = !task.isPrivate;
+        if (!task.isPrivate) {
+          el.detailPrivacyToggleWrapper.classList.add('is-shared');
+          el.detailPrivacyToggleWrapper.classList.remove('is-private');
+        } else {
+          el.detailPrivacyToggleWrapper.classList.add('is-private');
+          el.detailPrivacyToggleWrapper.classList.remove('is-shared');
+        }
       } else {
         el.detailPrivacyToggleWrapper.classList.add('hidden');
       }
@@ -2145,6 +2152,15 @@
         el.detailPrivacyBadge.classList.add('hidden');
       }
     }
+    if (el.detailPrivacyToggleWrapper) {
+      if (newIsPrivate) {
+        el.detailPrivacyToggleWrapper.classList.add('is-private');
+        el.detailPrivacyToggleWrapper.classList.remove('is-shared');
+      } else {
+        el.detailPrivacyToggleWrapper.classList.add('is-shared');
+        el.detailPrivacyToggleWrapper.classList.remove('is-private');
+      }
+    }
     DataService.saveToStorage();
     renderPeoplePanel();
     renderTasksList();
@@ -2267,9 +2283,33 @@
     if (el.taskShareTeamInput) {
       el.taskShareTeamInput.checked = false; // Unchecked by default (Private)
     }
+    updateNewTaskModalPrivacy(false);
 
     el.newTaskModal.classList.remove('hidden');
     el.taskNameInput.focus();
+  }
+
+  function updateNewTaskModalPrivacy(isShared) {
+    var modalOverlay = el.newTaskModal;
+    var modalDialog = document.getElementById('new-task-modal-dialog') || (modalOverlay ? modalOverlay.querySelector('.modal-dialog') : null);
+    if (modalOverlay) {
+      if (isShared) {
+        modalOverlay.classList.add('is-shared');
+        modalOverlay.classList.remove('is-private');
+      } else {
+        modalOverlay.classList.add('is-private');
+        modalOverlay.classList.remove('is-shared');
+      }
+    }
+    if (modalDialog) {
+      if (isShared) {
+        modalDialog.classList.add('is-shared');
+        modalDialog.classList.remove('is-private');
+      } else {
+        modalDialog.classList.add('is-private');
+        modalDialog.classList.remove('is-shared');
+      }
+    }
   }
 
   function closeNewTaskModal() {
@@ -2775,6 +2815,12 @@
     el.btnCloseModal.addEventListener('click', closeNewTaskModal);
     el.btnCancelModal.addEventListener('click', closeNewTaskModal);
     el.newTaskForm.addEventListener('submit', handleCreateTaskSubmit);
+
+    if (el.taskShareTeamInput) {
+      el.taskShareTeamInput.addEventListener('change', function () {
+        updateNewTaskModalPrivacy(this.checked);
+      });
+    }
 
     if (el.taskDeadlineInput) {
       el.taskDeadlineInput.addEventListener('input', function () {
