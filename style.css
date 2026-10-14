@@ -2440,6 +2440,40 @@ kbd, .kbd-shortcut, .btn-kbd, .search-kbd {
   line-height: 1.4;
 }
 
+/* Dynamic Window & Modal Backdrop Privacy States */
+#new-task-modal {
+  transition: backdrop-filter 0.25s ease, -webkit-backdrop-filter 0.25s ease, background-color 0.25s ease;
+}
+
+#new-task-modal.is-shared {
+  background-color: rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+#new-task-modal .modal-dialog {
+  border: 2px solid #5a5a60;
+  transition: border-color 0.18s ease, border-style 0.18s ease;
+}
+
+#new-task-modal .modal-dialog.is-shared {
+  border: 2px dashed var(--color-accent, #0071e3);
+}
+
+
+.detail-privacy-toggle-wrapper {
+  transition: all 0.18s ease;
+}
+
+.detail-privacy-toggle-wrapper.is-private {
+  border: 1.5px solid #5a5a60;
+}
+
+.detail-privacy-toggle-wrapper.is-shared {
+  border: 1.5px dashed var(--color-accent, #0071e3);
+  background-color: rgba(0, 113, 227, 0.04);
+}
+
 /* Respect Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -2448,4 +2482,5 @@ kbd, .kbd-shortcut, .btn-kbd, .search-kbd {
     transition-duration: 0.01ms !important;
   }
 }
+
 
