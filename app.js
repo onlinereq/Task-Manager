@@ -461,7 +461,6 @@
     isCreatingTask: false,
     isUpdatingStatus: false,
     pendingStateTasks: new Set(),
-    editingStatusName: null,
     lastRenderedTaskId: null
   };
 
@@ -510,6 +509,8 @@
     // Left Navigation
     filterAll: document.getElementById('filter-all'),
     countAll: document.getElementById('count-all'),
+    filterPersonal: document.getElementById('filter-personal'),
+    countPersonal: document.getElementById('count-personal'),
     membersNavList: document.getElementById('members-nav-list'),
     membersEmptyState: document.getElementById('members-empty-state'),
     filterCompleted: document.getElementById('filter-completed'),
@@ -538,9 +539,12 @@
     detailsContent: document.getElementById('details-content'),
     detailTaskName: document.getElementById('detail-task-name'),
     detailStatusBadge: document.getElementById('detail-status-badge'),
+    detailPrivacyBadge: document.getElementById('detail-privacy-badge'),
+    detailPrivacyToggleWrapper: document.getElementById('detail-privacy-toggle-wrapper'),
+    detailShareTeamCheckbox: document.getElementById('detail-share-team-checkbox'),
     detailOverduePill: document.getElementById('detail-overdue-pill'),
     btnMarkComplete: document.getElementById('btn-mark-complete'),
-    btnMarkArchive: document.getElementById('btn-mark-archive'),
+    btnRestoreTask: document.getElementById('btn-restore-task'),
     btnDeleteTask: document.getElementById('btn-delete-task'),
     detailAssigneeName: document.getElementById('detail-assignee-name'),
     detailAssigneeAvatar: document.getElementById('detail-assignee-avatar'),
@@ -565,7 +569,9 @@
     taskNameInput: document.getElementById('task-name-input'),
     taskAssigneeInput: document.getElementById('task-assignee-input'),
     taskDeadlineInput: document.getElementById('task-deadline-input'),
+    taskDeadlineHint: document.getElementById('task-deadline-hint'),
     taskDescInput: document.getElementById('task-desc-input'),
+    taskShareTeamInput: document.getElementById('task-share-team-input'),
     taskNameError: document.getElementById('task-name-error'),
     taskAssigneeError: document.getElementById('task-assignee-error'),
     taskDeadlineError: document.getElementById('task-deadline-error'),
@@ -579,23 +585,11 @@
     ctxOpenTask: document.getElementById('ctx-open-task'),
     ctxChangeStatus: document.getElementById('ctx-change-status'),
     ctxMarkComplete: document.getElementById('ctx-mark-complete'),
-    ctxMarkArchive: document.getElementById('ctx-mark-archive'),
+    ctxRestoreTask: document.getElementById('ctx-restore-task'),
     ctxDeleteTask: document.getElementById('ctx-delete-task'),
     undoToast: document.getElementById('undo-toast'),
     undoToastMessage: document.getElementById('undo-toast-message'),
     btnUndoToast: document.getElementById('btn-undo-toast'),
-
-    // Manage Statuses Modal
-    btnOpenManageStatuses: document.getElementById('btn-open-manage-statuses'),
-    btnManageStatusesLink: document.getElementById('btn-manage-statuses-link'),
-    manageStatusesModal: document.getElementById('manage-statuses-modal'),
-    btnCloseStatusesModal: document.getElementById('btn-close-statuses-modal'),
-    btnDoneStatusesModal: document.getElementById('btn-done-statuses-modal'),
-    addStatusForm: document.getElementById('add-status-form'),
-    newStatusInput: document.getElementById('new-status-input'),
-    btnAddStatus: document.getElementById('btn-add-status'),
-    addStatusError: document.getElementById('add-status-error'),
-    statusesManageList: document.getElementById('statuses-manage-list'),
 
     // Confirm / Alert Modal
     confirmModal: document.getElementById('confirm-modal'),
@@ -1011,16 +1005,25 @@
 
   function renderPeoplePanel() {
     var allTasks = DataService.getTasks();
-    var activeTasks = allTasks.filter(function (t) { return (t.state || 'Active') === 'Active'; });
-    var completedTasks = allTasks.filter(function (t) { return t.state === 'Completed'; });
-    var archivedTasks = allTasks.filter(function (t) { return t.state === 'Archived'; });
+    var publicTasks = allTasks.filter(function (t) { return !t.isPrivate; });
+    var activeTasks = publicTasks.filter(function (t) { return (t.state || 'Active') === 'Active'; });
+    var completedTasks = publicTasks.filter(function (t) { return t.state === 'Completed'; });
+    var archivedTasks = publicTasks.filter(function (t) { return t.state === 'Archived'; });
+
+    var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
+    var personalTasks = allTasks.filter(function (t) {
+      return (t.state || 'Active') === 'Active' &&
+             (t.createdBy || '').trim().toLowerCase() === currentUserName;
+    });
 
     el.countAll.textContent = activeTasks.length;
+    if (el.countPersonal) el.countPersonal.textContent = personalTasks.length;
     el.countCompleted.textContent = completedTasks.length;
     el.countArchived.textContent = archivedTasks.length;
 
     // Active state highlighting on left panel items
     el.filterAll.classList.toggle('active', state.filterType === 'ALL');
+    if (el.filterPersonal) el.filterPersonal.classList.toggle('active', state.filterType === 'PERSONAL');
     el.filterCompleted.classList.toggle('active', state.filterType === 'COMPLETED');
     el.filterArchived.classList.toggle('active', state.filterType === 'ARCHIVED');
 
@@ -1067,6 +1070,12 @@
       tasks = tasks.filter(function (t) { return t.state === 'Completed'; });
     } else if (state.filterType === 'ARCHIVED') {
       tasks = tasks.filter(function (t) { return t.state === 'Archived'; });
+    } else if (state.filterType === 'PERSONAL') {
+      var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
+      tasks = tasks.filter(function (t) {
+        return (t.state || 'Active') === 'Active' &&
+               (t.createdBy || '').trim().toLowerCase() === currentUserName;
+      });
     } else if (state.filterType === 'PERSON') {
       tasks = tasks.filter(function (t) {
         return (t.state || 'Active') === 'Active' &&
@@ -1126,7 +1135,9 @@
     if (state.filterType === 'COMPLETED') {
       el.currentViewTitle.textContent = 'Completed Tasks';
     } else if (state.filterType === 'ARCHIVED') {
-      el.currentViewTitle.textContent = 'Archived Tasks';
+      el.currentViewTitle.textContent = 'Deleted Tasks';
+    } else if (state.filterType === 'PERSONAL') {
+      el.currentViewTitle.textContent = 'Personal Tasks';
     } else if (state.filterType === 'PERSON') {
       el.currentViewTitle.textContent = state.selectedFilter + "'s Tasks";
     } else {
@@ -1168,8 +1179,8 @@
         el.tasksEmptyTitle.textContent = 'No completed tasks';
         el.tasksEmptyDesc.textContent = 'Finished tasks marked as Complete will appear here.';
       } else if (state.filterType === 'ARCHIVED') {
-        el.tasksEmptyTitle.textContent = 'No archived tasks';
-        el.tasksEmptyDesc.textContent = 'Tasks moved to Archive will appear here.';
+        el.tasksEmptyTitle.textContent = 'No deleted tasks';
+        el.tasksEmptyDesc.textContent = 'Tasks moved to Deleted will appear here.';
       } else if (state.filterType === 'PERSON') {
         el.tasksEmptyTitle.textContent = 'No tasks for this member';
         el.tasksEmptyDesc.textContent = 'There are no active tasks assigned to ' + sanitize(state.selectedFilter) + '.';
@@ -1221,7 +1232,10 @@
             ${daysBadge}${displayName}
             ${matchTag}
           </h3>
-          <span class="status-badge ${statusMeta.className}${lastClass}">${sanitize(task.status)}</span>
+          <div class="task-row-badges">
+            ${task.isPrivate ? '<span class="privacy-badge" title="Visible only to you"><svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="0" ry="0"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Only Me</span></span>' : ''}
+            <span class="status-badge ${statusMeta.className}${lastClass}">${sanitize(task.status)}</span>
+          </div>
         </div>
         <div class="task-row-bottom">
           <span class="task-assignee-chip">
@@ -1297,6 +1311,25 @@
     el.detailStatusBadge.className = 'status-badge ' + statusMeta.className + lastClass;
     el.detailStatusBadge.textContent = task.status;
 
+    if (el.detailPrivacyBadge) {
+      if (task.isPrivate) {
+        el.detailPrivacyBadge.classList.remove('hidden');
+      } else {
+        el.detailPrivacyBadge.classList.add('hidden');
+      }
+    }
+
+    var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
+    var isCreator = task.createdBy && task.createdBy.trim().toLowerCase() === currentUserName;
+    if (el.detailPrivacyToggleWrapper && el.detailShareTeamCheckbox) {
+      if (isCreator) {
+        el.detailPrivacyToggleWrapper.classList.remove('hidden');
+        el.detailShareTeamCheckbox.checked = !task.isPrivate;
+      } else {
+        el.detailPrivacyToggleWrapper.classList.add('hidden');
+      }
+    }
+
     var overdue = isOverdue(task.deadline, task.status);
     if (overdue) {
       el.detailOverduePill.classList.remove('hidden');
@@ -1304,18 +1337,14 @@
       el.detailOverduePill.classList.add('hidden');
     }
 
-    // Toggle Complete/Archive button states depending on current task state
+    // Toggle Complete / Restore / Delete button states depending on current task state
     if (task.state === 'Archived') {
       el.btnMarkComplete.classList.add('hidden');
-      el.btnMarkArchive.classList.remove('hidden');
-      el.btnMarkArchive.innerHTML = `
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="1 4 1 10 7 10"/>
-          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-        </svg>
-        <span>Restore</span>
-      `;
-      el.btnMarkArchive.title = 'Restore task to Active';
+      if (el.btnRestoreTask) el.btnRestoreTask.classList.remove('hidden');
+      if (el.btnDeleteTask) {
+        el.btnDeleteTask.classList.remove('hidden');
+        el.btnDeleteTask.title = 'Permanently delete task';
+      }
     } else if (task.state === 'Completed') {
       el.btnMarkComplete.classList.remove('hidden');
       el.btnMarkComplete.innerHTML = `
@@ -1328,16 +1357,11 @@
       `;
       el.btnMarkComplete.title = 'Reopen task as Active';
 
-      el.btnMarkArchive.classList.remove('hidden');
-      el.btnMarkArchive.innerHTML = `
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="21 8 21 21 3 21 3 8"/>
-          <rect x="1" y="3" width="22" height="5"/>
-          <line x1="10" y1="12" x2="14" y2="12"/>
-        </svg>
-        <span>Archive</span>
-      `;
-      el.btnMarkArchive.title = 'Archive task';
+      if (el.btnRestoreTask) el.btnRestoreTask.classList.add('hidden');
+      if (el.btnDeleteTask) {
+        el.btnDeleteTask.classList.remove('hidden');
+        el.btnDeleteTask.title = 'Move task to Deleted';
+      }
     } else {
       el.btnMarkComplete.classList.remove('hidden');
       el.btnMarkComplete.innerHTML = `
@@ -1348,16 +1372,11 @@
       `;
       el.btnMarkComplete.title = 'Mark task completed';
 
-      el.btnMarkArchive.classList.remove('hidden');
-      el.btnMarkArchive.innerHTML = `
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="21 8 21 21 3 21 3 8"/>
-          <rect x="1" y="3" width="22" height="5"/>
-          <line x1="10" y1="12" x2="14" y2="12"/>
-        </svg>
-        <span>Archive</span>
-      `;
-      el.btnMarkArchive.title = 'Archive task';
+      if (el.btnRestoreTask) el.btnRestoreTask.classList.add('hidden');
+      if (el.btnDeleteTask) {
+        el.btnDeleteTask.classList.remove('hidden');
+        el.btnDeleteTask.title = 'Move task to Deleted';
+      }
     }
 
     el.detailAssigneeName.textContent = task.assignedTo || '-';
@@ -1685,6 +1704,20 @@
     }
 
     el.confirmModal.classList.remove('hidden');
+
+    // Ensure buttons on the same page/modal share equal size with zero text cut-off
+    if (el.btnCancelConfirm && el.btnOkConfirm) {
+      el.btnCancelConfirm.style.width = 'auto';
+      el.btnOkConfirm.style.width = 'auto';
+      var wCancel = options.isAlert ? 0 : el.btnCancelConfirm.scrollWidth;
+      var wOk = el.btnOkConfirm.scrollWidth;
+      var equalW = Math.max(wCancel, wOk, 170);
+      if (!options.isAlert) {
+        el.btnCancelConfirm.style.width = equalW + 'px';
+      }
+      el.btnOkConfirm.style.width = equalW + 'px';
+    }
+
     el.btnOkConfirm.focus();
 
     return new Promise(function (resolve) {
@@ -1696,6 +1729,8 @@
     if (el.confirmModal) {
       el.confirmModal.classList.add('hidden');
     }
+    if (el.btnCancelConfirm) el.btnCancelConfirm.style.width = '';
+    if (el.btnOkConfirm) el.btnOkConfirm.style.width = '';
     if (confirmModalResolver) {
       var r = confirmModalResolver;
       confirmModalResolver = null;
@@ -1728,15 +1763,15 @@
       confirmType = 'primary';
       iconType = 'check';
     } else if (targetState === 'Archived') {
-      title = 'Archive Task';
-      headline = 'Archive this task?';
-      message = 'Are you sure you want to move ' + taskTitle + ' to the archive?';
-      confirmText = 'Archive';
-      confirmType = 'warning';
-      iconType = 'archive';
+      title = 'Delete Task';
+      headline = 'Move to Deleted tasks?';
+      message = 'Are you sure you want to move ' + taskTitle + ' to Deleted tasks? You can restore it later.';
+      confirmText = 'Delete';
+      confirmType = 'danger';
+      iconType = 'danger';
     } else {
-      title = 'Restore to Active';
-      headline = 'Restore task to active?';
+      title = 'Restore Task';
+      headline = 'Restore task to Active?';
       message = 'Are you sure you want to restore ' + taskTitle + ' back to active tasks?';
       confirmText = 'Restore';
       confirmType = 'primary';
@@ -2003,10 +2038,10 @@
     if (!task || !state.currentUser) return;
 
     var confirmed = await showConfirmModal({
-      title: 'Delete Task',
-      headline: 'Delete "' + task.taskName + '"?',
-      message: 'Are you sure you want to delete this task? This action cannot be undone.',
-      confirmText: 'Delete',
+      title: 'Permanently Delete Task',
+      headline: 'Permanently delete "' + task.taskName + '"?',
+      message: 'Are you sure you want to permanently delete this task? This action cannot be undone and will remove all history.',
+      confirmText: 'Delete Permanently',
       cancelText: 'Cancel',
       confirmType: 'danger',
       iconType: 'danger'
@@ -2071,7 +2106,8 @@
     if (state.undoTimeout) clearTimeout(state.undoTimeout);
     state.lastUndoAction = { taskId: taskId, prevState: prevState };
 
-    el.undoToastMessage.textContent = 'Task marked as ' + newState;
+    var actionText = newState === 'Archived' ? 'moved to Deleted' : (newState === 'Completed' ? 'marked as Completed' : 'restored to Active');
+    el.undoToastMessage.textContent = 'Task ' + actionText;
     el.undoToast.classList.remove('hidden');
 
     state.undoTimeout = setTimeout(function () {
@@ -2088,9 +2124,98 @@
     state.lastUndoAction = null;
   }
 
+  function handleTogglePrivacy() {
+    if (!state.selectedTaskId) return;
+    var task = DataService.getTaskById(state.selectedTaskId);
+    if (!task) return;
+
+    var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
+    var isCreator = task.createdBy && task.createdBy.trim().toLowerCase() === currentUserName;
+    if (!isCreator) return;
+
+    var newIsPrivate = !el.detailShareTeamCheckbox.checked;
+    var prevIsPrivate = task.isPrivate;
+    task.isPrivate = newIsPrivate;
+
+    // Instant optimistic UI update
+    if (el.detailPrivacyBadge) {
+      if (task.isPrivate) {
+        el.detailPrivacyBadge.classList.remove('hidden');
+      } else {
+        el.detailPrivacyBadge.classList.add('hidden');
+      }
+    }
+    DataService.saveToStorage();
+    renderPeoplePanel();
+    renderTasksList();
+
+    apiCall('setPrivacy', {
+      taskId: task.taskId,
+      isPrivate: newIsPrivate
+    }).then(function (res) {
+      if (handleAuthFailureResponse(res, function () {
+        task.isPrivate = prevIsPrivate;
+        renderAll();
+      })) return;
+
+      if (res && res.ok && res.task) {
+        var idx = DataService.tasks.findIndex(function (t) {
+          return String(t.taskId || '').trim().toLowerCase() === String(task.taskId || '').trim().toLowerCase();
+        });
+        if (idx !== -1) {
+          DataService.tasks[idx].isPrivate = (res.task.isPrivate === true);
+        }
+        if (res.historyEntry) {
+          DataService.history.unshift(res.historyEntry);
+          DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
+        }
+        DataService.saveToStorage();
+        renderAll();
+      } else {
+        task.isPrivate = prevIsPrivate;
+        renderAll();
+        showAlertModal((res && res.message) || 'Failed to update privacy on server.', 'Privacy Update Error');
+      }
+    }).catch(function () {
+      task.isPrivate = prevIsPrivate;
+      renderAll();
+    });
+  }
+
   // ==========================================================================
   // 10. MODAL: CREATE TASK
   // ==========================================================================
+  function updateDeadlineHint(dateVal) {
+    if (!el.taskDeadlineHint) return;
+    if (!dateVal) {
+      el.taskDeadlineHint.textContent = '';
+      return;
+    }
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var selected = new Date(dateVal.includes('T') ? dateVal : (dateVal + 'T00:00:00'));
+    if (isNaN(selected.getTime())) {
+      el.taskDeadlineHint.textContent = '';
+      return;
+    }
+    var diffMs = selected.getTime() - today.getTime();
+    var diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 14) {
+      el.taskDeadlineHint.textContent = '(2 weeks from now selected)';
+    } else if (diffDays === 1) {
+      el.taskDeadlineHint.textContent = '(1 day from now)';
+    } else if (diffDays > 1) {
+      el.taskDeadlineHint.textContent = '(' + diffDays + ' days from now)';
+    } else if (diffDays === 0) {
+      el.taskDeadlineHint.textContent = '(Today)';
+    } else if (diffDays === -1) {
+      el.taskDeadlineHint.textContent = '(1 day ago)';
+    } else {
+      el.taskDeadlineHint.textContent = '(' + Math.abs(diffDays) + ' days ago)';
+    }
+  }
+
   function openNewTaskModal() {
     el.newTaskForm.reset();
     el.taskNameError.textContent = '';
@@ -2137,6 +2262,11 @@
     var mm = String(defDate.getMonth() + 1).padStart(2, '0');
     var dd = String(defDate.getDate()).padStart(2, '0');
     el.taskDeadlineInput.value = `${yyyy}-${mm}-${dd}`;
+    updateDeadlineHint(el.taskDeadlineInput.value);
+
+    if (el.taskShareTeamInput) {
+      el.taskShareTeamInput.checked = false; // Unchecked by default (Private)
+    }
 
     el.newTaskModal.classList.remove('hidden');
     el.taskNameInput.focus();
@@ -2207,6 +2337,7 @@
     var tempId = 'TSK-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     var tempHistoryId = 'HIST-' + Date.now().toString(36).toUpperCase() + '-INIT';
     var currentUserName = state.currentUser ? state.currentUser.name : assignedTo;
+    var isPrivate = el.taskShareTeamInput ? !el.taskShareTeamInput.checked : true;
 
     var optimisticTask = {
       taskId: tempId,
@@ -2219,7 +2350,8 @@
       createdBy: currentUserName,
       createdAt: nowIso,
       lastUpdatedBy: currentUserName,
-      lastUpdatedAt: nowIso
+      lastUpdatedAt: nowIso,
+      isPrivate: isPrivate
     };
 
     var optimisticHistory = {
@@ -2269,7 +2401,8 @@
       taskName: name,
       assignedTo: assignedTo,
       deadline: deadline,
-      description: description
+      description: description,
+      isPrivate: isPrivate
     }).then(function (res) {
       if (handleAuthFailureResponse(res, rollbackCreate)) return;
 
@@ -2314,275 +2447,6 @@
   }
 
   // ==========================================================================
-  // 10b. MODAL: MANAGE WORKFLOW STATUSES (ADD / EDIT / DELETE)
-  // ==========================================================================
-  function openManageStatusesModal() {
-    state.editingStatusName = null;
-    if (el.newStatusInput) {
-      el.newStatusInput.value = '';
-      el.newStatusInput.classList.remove('is-invalid');
-    }
-    if (el.addStatusError) el.addStatusError.textContent = '';
-    renderStatusesManageList();
-    if (el.manageStatusesModal) {
-      el.manageStatusesModal.classList.remove('hidden');
-    }
-    if (el.newStatusInput) {
-      el.newStatusInput.focus();
-    }
-  }
-
-  function closeManageStatusesModal() {
-    state.editingStatusName = null;
-    if (el.manageStatusesModal) {
-      el.manageStatusesModal.classList.add('hidden');
-    }
-  }
-
-  function renderStatusesManageList() {
-    if (!el.statusesManageList) return;
-    el.statusesManageList.innerHTML = '';
-
-    if (!DataService.statuses || DataService.statuses.length === 0) {
-      var emptyNotice = document.createElement('div');
-      emptyNotice.className = 'empty-hint';
-      emptyNotice.textContent = 'No statuses defined.';
-      el.statusesManageList.appendChild(emptyNotice);
-      return;
-    }
-
-    DataService.statuses.forEach(function (st, idx) {
-      var itemDiv = document.createElement('div');
-      itemDiv.className = 'status-manage-item';
-
-      if (state.editingStatusName === st) {
-        // Inline Edit Mode
-        var input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'status-inline-edit-input';
-        input.value = st;
-        if (isKhmer(st)) input.setAttribute('lang', 'km');
-
-        var actionsDiv = document.createElement('div');
-        actionsDiv.className = 'status-manage-actions';
-
-        var btnSave = document.createElement('button');
-        btnSave.type = 'button';
-        btnSave.className = 'btn btn-primary btn-sm';
-        btnSave.textContent = 'Save';
-
-        var btnCancel = document.createElement('button');
-        btnCancel.type = 'button';
-        btnCancel.className = 'btn btn-secondary btn-sm';
-        btnCancel.textContent = 'Cancel';
-
-        function doSave() {
-          var val = input.value.trim();
-          if (!val) {
-            input.focus();
-            return;
-          }
-          if (val === st) {
-            state.editingStatusName = null;
-            renderStatusesManageList();
-            return;
-          }
-          var duplicate = DataService.statuses.some(function (other, otherIdx) {
-            return otherIdx !== idx && other.toLowerCase() === val.toLowerCase();
-          });
-          if (duplicate) {
-            showAlertModal('A status named "' + val + '" already exists.', 'Duplicate Status');
-            input.focus();
-            return;
-          }
-
-          var oldVal = st;
-          // Optimistically update statuses array and existing tasks/history
-          DataService.statuses[idx] = val;
-          DataService.tasks.forEach(function (t) {
-            if (t.status === oldVal) {
-              t.status = val;
-              t.lastUpdatedBy = state.currentUser ? state.currentUser.name : t.lastUpdatedBy;
-              t.lastUpdatedAt = new Date().toISOString();
-            }
-          });
-          DataService.history.forEach(function (h) {
-            if (h.status === oldVal) {
-              h.status = val;
-            }
-          });
-          DataService.saveToStorage();
-          state.editingStatusName = null;
-          renderAll();
-          renderStatusesManageList();
-
-          // Sync backend
-          apiCall('editStatus', { oldStatus: oldVal, newStatus: val }).then(function (res) {
-            if (res && res.success && Array.isArray(res.statuses) && res.statuses.length > 0) {
-              DataService.statuses = res.statuses;
-              DataService.saveToStorage();
-              renderAll();
-              renderStatusesManageList();
-            }
-          }).catch(function () {});
-        }
-
-        btnSave.addEventListener('click', doSave);
-        btnCancel.addEventListener('click', function () {
-          state.editingStatusName = null;
-          renderStatusesManageList();
-        });
-
-        input.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            doSave();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            state.editingStatusName = null;
-            renderStatusesManageList();
-          }
-        });
-
-        actionsDiv.appendChild(btnSave);
-        actionsDiv.appendChild(btnCancel);
-
-        itemDiv.appendChild(input);
-        itemDiv.appendChild(actionsDiv);
-
-        setTimeout(function () {
-          input.focus();
-          input.select();
-        }, 10);
-      } else {
-        // Normal View Mode
-        var leftDiv = document.createElement('div');
-        leftDiv.className = 'status-manage-left';
-
-        var nameSpan = document.createElement('span');
-        nameSpan.className = 'status-manage-name';
-        nameSpan.textContent = st;
-        if (isKhmer(st)) nameSpan.setAttribute('lang', 'km');
-        leftDiv.appendChild(nameSpan);
-
-        var actionsDiv = document.createElement('div');
-        actionsDiv.className = 'status-manage-actions';
-
-        var btnEdit = document.createElement('button');
-        btnEdit.type = 'button';
-        btnEdit.className = 'btn btn-secondary btn-sm';
-        btnEdit.textContent = 'Edit';
-        btnEdit.addEventListener('click', function () {
-          state.editingStatusName = st;
-          renderStatusesManageList();
-        });
-
-        var btnDelete = document.createElement('button');
-        btnDelete.type = 'button';
-        btnDelete.className = 'btn btn-ghost btn-sm';
-        btnDelete.textContent = 'Delete';
-        btnDelete.addEventListener('click', async function () {
-          if (DataService.statuses.length <= 1) {
-            showAlertModal('Cannot delete the last remaining status.', 'Delete Status');
-            return;
-          }
-          var tasksUsingStatus = DataService.tasks.filter(function (t) { return t.status === st; });
-          var msg = tasksUsingStatus.length > 0
-            ? ('Are you sure you want to delete status "' + st + '"? ' + tasksUsingStatus.length + ' task(s) currently use it and will be moved to "' + (DataService.statuses.find(function(s){ return s !== st; }) || 'In Progress') + '".')
-            : ('Are you sure you want to delete status "' + st + '"?');
-
-          var confirmed = await showConfirmModal({
-            title: 'Delete Status',
-            headline: 'Delete "' + st + '"?',
-            message: msg,
-            confirmText: 'Delete',
-            confirmType: 'danger',
-            iconType: 'danger'
-          });
-
-          if (!confirmed) return;
-
-          var targetFallback = DataService.statuses.find(function(s){ return s !== st; }) || 'In Progress';
-
-          // Optimistically remove and reassign tasks
-          DataService.statuses = DataService.statuses.filter(function (s) { return s !== st; });
-          DataService.tasks.forEach(function (t) {
-            if (t.status === st) {
-              t.status = targetFallback;
-              t.lastUpdatedBy = state.currentUser ? state.currentUser.name : t.lastUpdatedBy;
-              t.lastUpdatedAt = new Date().toISOString();
-            }
-          });
-          DataService.saveToStorage();
-          if (state.editingStatusName === st) state.editingStatusName = null;
-          renderAll();
-          renderStatusesManageList();
-
-          // Sync backend
-          apiCall('deleteStatus', { status: st }).then(function (res) {
-            if (res && res.success && Array.isArray(res.statuses) && res.statuses.length > 0) {
-              DataService.statuses = res.statuses;
-              DataService.saveToStorage();
-              renderAll();
-              renderStatusesManageList();
-            }
-          }).catch(function () {});
-        });
-
-        actionsDiv.appendChild(btnEdit);
-        actionsDiv.appendChild(btnDelete);
-
-        itemDiv.appendChild(leftDiv);
-        itemDiv.appendChild(actionsDiv);
-      }
-
-      el.statusesManageList.appendChild(itemDiv);
-    });
-  }
-
-  function handleAddStatusSubmit(e) {
-    e.preventDefault();
-    if (!el.newStatusInput) return;
-    if (el.addStatusError) el.addStatusError.textContent = '';
-    el.newStatusInput.classList.remove('is-invalid');
-
-    var val = el.newStatusInput.value.trim();
-    if (!val) {
-      if (el.addStatusError) el.addStatusError.textContent = 'Status name cannot be empty';
-      el.newStatusInput.classList.add('is-invalid');
-      el.newStatusInput.focus();
-      return;
-    }
-
-    var duplicate = DataService.statuses.some(function (st) {
-      return st.toLowerCase() === val.toLowerCase();
-    });
-    if (duplicate) {
-      if (el.addStatusError) el.addStatusError.textContent = 'Status already exists';
-      el.newStatusInput.classList.add('is-invalid');
-      el.newStatusInput.focus();
-      return;
-    }
-
-    // Optimistically append status
-    DataService.statuses.push(val);
-    DataService.saveToStorage();
-    renderAll();
-    renderStatusesManageList();
-    el.newStatusInput.value = '';
-
-    // Sync backend
-    apiCall('addStatus', { status: val }).then(function (res) {
-      if (res && res.success && Array.isArray(res.statuses) && res.statuses.length > 0) {
-        DataService.statuses = res.statuses;
-        DataService.saveToStorage();
-        renderAll();
-        renderStatusesManageList();
-      }
-    }).catch(function () {});
-  }
-
-  // ==========================================================================
   // 11. CONTEXT MENU & SHORTCUTS
   // ==========================================================================
   function openContextMenu(e, taskId) {
@@ -2590,11 +2454,21 @@
     var task = DataService.getTaskById(taskId);
     if (!task) return;
 
-    el.ctxMarkComplete.querySelector('span').textContent =
-      task.state === 'Completed' ? 'Mark Active' : 'Mark Complete';
-
-    el.ctxMarkArchive.querySelector('span').textContent =
-      task.state === 'Archived' ? 'Unarchive' : 'Archive';
+    if (task.state === 'Archived') {
+      el.ctxMarkComplete.classList.add('hidden');
+      if (el.ctxRestoreTask) el.ctxRestoreTask.classList.remove('hidden');
+      if (el.ctxDeleteTask) {
+        el.ctxDeleteTask.querySelector('span').textContent = 'Delete Permanently';
+      }
+    } else {
+      el.ctxMarkComplete.classList.remove('hidden');
+      el.ctxMarkComplete.querySelector('span').textContent =
+        task.state === 'Completed' ? 'Mark Active' : 'Mark Complete';
+      if (el.ctxRestoreTask) el.ctxRestoreTask.classList.add('hidden');
+      if (el.ctxDeleteTask) {
+        el.ctxDeleteTask.querySelector('span').textContent = 'Delete Task';
+      }
+    }
 
     var x = Math.min(e.clientX, window.innerWidth - 180);
     var y = Math.min(e.clientY, window.innerHeight - 150);
@@ -2627,7 +2501,6 @@
   function setupKeyboardShortcuts() {
     document.addEventListener('keydown', function (e) {
       var isModalOpen = !el.newTaskModal.classList.contains('hidden');
-      var isStatusesModalOpen = el.manageStatusesModal && !el.manageStatusesModal.classList.contains('hidden');
       var isCtxOpen = !el.taskContextMenu.classList.contains('hidden');
       var activeTag = (document.activeElement && document.activeElement.tagName) || '';
       var isTyping = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
@@ -2647,9 +2520,6 @@
           e.preventDefault();
         } else if (isCtxOpen) {
           closeContextMenu();
-          e.preventDefault();
-        } else if (isStatusesModalOpen) {
-          closeManageStatusesModal();
           e.preventDefault();
         } else if (isModalOpen) {
           closeNewTaskModal();
@@ -2682,26 +2552,29 @@
       }
 
       // / or Ctrl+K: Focus search
-      if ((e.key === '/' && !isTyping && !isModalOpen && !isStatusesModalOpen) || (e.ctrlKey && e.key.toLowerCase() === 'k')) {
+      if ((e.key === '/' && !isTyping && !isModalOpen) || (e.ctrlKey && e.key.toLowerCase() === 'k')) {
         e.preventDefault();
         el.taskSearchInput.focus();
         el.taskSearchInput.select();
         return;
       }
 
-      // 'e', 'E', or Delete: Quick archive currently selected task
-      if (!isTyping && !isModalOpen && !isStatusesModalOpen && state.selectedTaskId && (e.key === 'e' || e.key === 'E' || e.key === 'Delete')) {
+      // 'e', 'E', or Delete: Delete / move to Deleted currently selected task
+      if (!isTyping && !isModalOpen && state.selectedTaskId && (e.key === 'e' || e.key === 'E' || e.key === 'Delete')) {
         e.preventDefault();
         var selectedTask = DataService.getTaskById(state.selectedTaskId);
         if (selectedTask) {
-          var targetState = selectedTask.state === 'Archived' ? 'Active' : 'Archived';
-          confirmTaskStateChange(state.selectedTaskId, targetState);
+          if (selectedTask.state === 'Archived') {
+            confirmAndDeleteTask(selectedTask.taskId);
+          } else {
+            confirmTaskStateChange(selectedTask.taskId, 'Archived');
+          }
         }
         return;
       }
 
       // Arrow navigation across tasks
-      if (!isTyping && !isModalOpen && !isStatusesModalOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      if (!isTyping && !isModalOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
         var visibleTasks = getFilteredTasks();
         if (visibleTasks.length === 0) return;
         var curIdx = visibleTasks.findIndex(function (t) { return t.taskId === state.selectedTaskId; });
@@ -2719,7 +2592,7 @@
       }
 
       // Return: Select / open focused task row
-      if (e.key === 'Enter' && !isTyping && !isModalOpen && !isStatusesModalOpen) {
+      if (e.key === 'Enter' && !isTyping && !isModalOpen) {
         if (document.activeElement && document.activeElement.classList.contains('task-item-row')) {
           var tId = document.activeElement.dataset.taskId;
           if (tId) selectTask(tId);
@@ -2751,6 +2624,11 @@
     el.filterAll.addEventListener('click', function () {
       setViewFilter('ALL');
     });
+    if (el.filterPersonal) {
+      el.filterPersonal.addEventListener('click', function () {
+        setViewFilter('PERSONAL');
+      });
+    }
     el.filterCompleted.addEventListener('click', function () {
       setViewFilter('COMPLETED');
     });
@@ -2793,6 +2671,11 @@
     });
     if (el.btnSubmitStatusUpdate) {
       el.btnSubmitStatusUpdate.addEventListener('click', handleStatusUpdate);
+    }
+
+    // Task Privacy Toggle
+    if (el.detailShareTeamCheckbox) {
+      el.detailShareTeamCheckbox.addEventListener('change', handleTogglePrivacy);
     }
 
     // Custom Status Dropdown events
@@ -2853,7 +2736,7 @@
       });
     }
 
-    // Mark complete / Archive actions (with website confirmation popup)
+    // Mark complete / Restore / Delete actions (with website confirmation popup)
     el.btnMarkComplete.addEventListener('click', function () {
       if (!state.selectedTaskId) return;
       var task = DataService.getTaskById(state.selectedTaskId);
@@ -2862,18 +2745,25 @@
       confirmTaskStateChange(task.taskId, targetState);
     });
 
-    el.btnMarkArchive.addEventListener('click', function () {
-      if (!state.selectedTaskId) return;
-      var task = DataService.getTaskById(state.selectedTaskId);
-      if (!task) return;
-      var targetState = task.state === 'Archived' ? 'Active' : 'Archived';
-      confirmTaskStateChange(task.taskId, targetState);
-    });
+    if (el.btnRestoreTask) {
+      el.btnRestoreTask.addEventListener('click', function () {
+        if (!state.selectedTaskId) return;
+        var task = DataService.getTaskById(state.selectedTaskId);
+        if (!task) return;
+        confirmTaskStateChange(task.taskId, 'Active');
+      });
+    }
 
     if (el.btnDeleteTask) {
       el.btnDeleteTask.addEventListener('click', function () {
         if (!state.selectedTaskId) return;
-        confirmAndDeleteTask(state.selectedTaskId);
+        var task = DataService.getTaskById(state.selectedTaskId);
+        if (!task) return;
+        if (task.state === 'Archived') {
+          confirmAndDeleteTask(task.taskId);
+        } else {
+          confirmTaskStateChange(task.taskId, 'Archived');
+        }
       });
     }
 
@@ -2886,22 +2776,15 @@
     el.btnCancelModal.addEventListener('click', closeNewTaskModal);
     el.newTaskForm.addEventListener('submit', handleCreateTaskSubmit);
 
-    // Manage Statuses Modal
-    if (el.btnOpenManageStatuses) {
-      el.btnOpenManageStatuses.addEventListener('click', openManageStatusesModal);
+    if (el.taskDeadlineInput) {
+      el.taskDeadlineInput.addEventListener('input', function () {
+        updateDeadlineHint(this.value);
+      });
+      el.taskDeadlineInput.addEventListener('change', function () {
+        updateDeadlineHint(this.value);
+      });
     }
-    if (el.btnManageStatusesLink) {
-      el.btnManageStatusesLink.addEventListener('click', openManageStatusesModal);
-    }
-    if (el.btnCloseStatusesModal) {
-      el.btnCloseStatusesModal.addEventListener('click', closeManageStatusesModal);
-    }
-    if (el.btnDoneStatusesModal) {
-      el.btnDoneStatusesModal.addEventListener('click', closeManageStatusesModal);
-    }
-    if (el.addStatusForm) {
-      el.addStatusForm.addEventListener('submit', handleAddStatusSubmit);
-    }
+
 
     // Context menu actions
     el.ctxOpenTask.addEventListener('click', function () {
@@ -2933,21 +2816,29 @@
       closeContextMenu();
     });
 
-    el.ctxMarkArchive.addEventListener('click', function () {
-      if (state.contextMenuTaskId) {
-        var t = DataService.getTaskById(state.contextMenuTaskId);
-        if (t) {
-          var targetState = t.state === 'Archived' ? 'Active' : 'Archived';
-          confirmTaskStateChange(t.taskId, targetState);
+    if (el.ctxRestoreTask) {
+      el.ctxRestoreTask.addEventListener('click', function () {
+        if (state.contextMenuTaskId) {
+          var t = DataService.getTaskById(state.contextMenuTaskId);
+          if (t) {
+            confirmTaskStateChange(t.taskId, 'Active');
+          }
         }
-      }
-      closeContextMenu();
-    });
+        closeContextMenu();
+      });
+    }
 
     if (el.ctxDeleteTask) {
       el.ctxDeleteTask.addEventListener('click', function () {
         if (state.contextMenuTaskId) {
-          confirmAndDeleteTask(state.contextMenuTaskId);
+          var t = DataService.getTaskById(state.contextMenuTaskId);
+          if (t) {
+            if (t.state === 'Archived') {
+              confirmAndDeleteTask(t.taskId);
+            } else {
+              confirmTaskStateChange(t.taskId, 'Archived');
+            }
+          }
         }
         closeContextMenu();
       });
