@@ -605,7 +605,14 @@
     confirmModalIconWrap: document.getElementById('confirm-modal-icon-wrap'),
     btnCloseConfirmModal: document.getElementById('btn-close-confirm-modal'),
     btnCancelConfirm: document.getElementById('btn-cancel-confirm'),
-    btnOkConfirm: document.getElementById('btn-ok-confirm')
+    btnOkConfirm: document.getElementById('btn-ok-confirm'),
+
+    // Version & Disclaimer
+    appVersionIndicator: document.getElementById('app-version-indicator'),
+    btnOpenDisclaimer: document.getElementById('btn-open-disclaimer'),
+    disclaimerModal: document.getElementById('disclaimer-modal'),
+    btnCloseDisclaimerModal: document.getElementById('btn-close-disclaimer-modal'),
+    btnCloseDisclaimerBottom: document.getElementById('btn-close-disclaimer-bottom')
   };
 
   // ==========================================================================
@@ -865,6 +872,11 @@
   function initAuth() {
     // Ping backend immediately on page load to wake up script
     apiCall('ping');
+
+    // Populate app version from config.js
+    if (el.appVersionIndicator) {
+      el.appVersionIndicator.textContent = (typeof APP_VERSION !== 'undefined' && APP_VERSION) ? APP_VERSION : 'v1.0.0';
+    }
 
     // Never show cached data before login is verified by Code.gs.
     // Credentials kept in memory or sessionStorage only, NEVER in localStorage.
@@ -2601,6 +2613,14 @@
     el.panelPeople.classList.toggle('collapsed');
   }
 
+  function openDisclaimerModal() {
+    if (el.disclaimerModal) el.disclaimerModal.classList.remove('hidden');
+  }
+
+  function closeDisclaimerModal() {
+    if (el.disclaimerModal) el.disclaimerModal.classList.add('hidden');
+  }
+
   // ==========================================================================
   // 12. KEYBOARD SHORTCUTS & EVENT LISTENERS
   // ==========================================================================
@@ -2614,7 +2634,11 @@
 
       // Escape
       if (e.key === 'Escape') {
-        if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) {
+        if (el.disclaimerModal && !el.disclaimerModal.classList.contains('hidden')) {
+          closeDisclaimerModal();
+          e.preventDefault();
+          return;
+        } else if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) {
           closeConfirmModal(false);
           e.preventDefault();
           return;
@@ -2807,6 +2831,24 @@
       el.confirmModal.addEventListener('click', function (e) {
         if (e.target === el.confirmModal) {
           closeConfirmModal(false);
+        }
+      });
+    }
+
+    // Disclaimer Modal events
+    if (el.btnOpenDisclaimer) {
+      el.btnOpenDisclaimer.addEventListener('click', openDisclaimerModal);
+    }
+    if (el.btnCloseDisclaimerModal) {
+      el.btnCloseDisclaimerModal.addEventListener('click', closeDisclaimerModal);
+    }
+    if (el.btnCloseDisclaimerBottom) {
+      el.btnCloseDisclaimerBottom.addEventListener('click', closeDisclaimerModal);
+    }
+    if (el.disclaimerModal) {
+      el.disclaimerModal.addEventListener('click', function (e) {
+        if (e.target === el.disclaimerModal) {
+          closeDisclaimerModal();
         }
       });
     }
