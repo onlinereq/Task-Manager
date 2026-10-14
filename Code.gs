@@ -497,6 +497,111 @@ function invalidateDataCache() {
 }
 
 // ============================================================================
+// MANUAL LOCKOUT RESET & MANAGEMENT
+// ============================================================================
+
+/**
+ * Resets a user's 15-minute lockout and clears their failed-attempt counter.
+ * CacheService keys cleared:
+ *  - 'lockout_' + lowerName (lockout flag)
+ *  - 'fails_' + lowerName   (failed attempts counter)
+ *
+ * @param {string} [name] - Target user name to unlock. If omitted, uses DEFAULT_EDITOR_TARGET.
+ * @param {string} [source] - Diagnostic label for the reset audit log.
+ */
+function clearLockout(name, source) {
+  var DEFAULT_EDITOR_TARGET = 'Alex Chen'; // <-- Edit name here if running clearLockout directly from Apps Script editor
+  var rawName = String(name || DEFAULT_EDITOR_TARGET).trim();
+  if (!rawName) {
+    return { ok: false, error: 'invalid_name', message: 'User name is required.' };
+  }
+
+  var normName = rawName.toLowerCase();
+  var cache = CacheService.getScriptCache();
+  var lockoutKey = 'lockout_' + normName;
+  var failKey = 'fails_' + normName;
+
+  cache.remove(lockoutKey);
+  cache.remove(failKey);
+
+  logLockoutReset(rawName, source || 'manual');
+
+  var msg = 'Lockout and failed attempts successfully cleared for: ' + rawName;
+  Logger.log(msg);
+
+  return {
+    ok: true,
+    success: true,
+    message: msg,
+    user: rawName,
+    keysCleared: [lockoutKey, failKey]
+  };
+}
+
+/**
+ * Direct execution from Apps Script Editor dropdown.
+ * Edit TARGET_NAME below to the name you want to unlock, then click Run.
+ */
+function runClearLockout() {
+  var TARGET_NAME = 'Alex Chen'; // <-- Edit this name to unlock a user from the Apps Script editor
+  var result = clearLockout(TARGET_NAME, 'Apps Script Editor: runClearLockout');
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+/**
+ * Handles action: "clearLockout" from the web app API.
+ * Requires a separate admin password configured in Script Properties ('ADMIN_PASSWORD').
+ */
+function handleClearLockoutAction(targetName, adminPassword) {
+  var props = PropertiesService.getScriptProperties();
+  var configuredAdminPass = props.getProperty('ADMIN_PASSWORD');
+
+  if (!configuredAdminPass) {
+    return {
+      ok: false,
+      error: 'unauthorized',
+      message: 'ADMIN_PASSWORD is not configured in Script Properties.'
+    };
+  }
+
+  if (!adminPassword || String(adminPassword).trim() !== configuredAdminPass.trim()) {
+    Utilities.sleep(CONFIG.FAILURE_DELAY_MS);
+    return {
+      ok: false,
+      error: 'unauthorized',
+      message: 'Invalid admin credentials.'
+    };
+  }
+
+  return clearLockout(targetName, 'API action (admin password verified)');
+}
+
+/**
+ * Records manual lockout resets with timestamp and source in ScriptProperties.
+ */
+function logLockoutReset(name, source) {
+  try {
+    var timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, CONFIG.DATETIME_FORMAT);
+    var props = PropertiesService.getScriptProperties();
+    var rawLogs = props.getProperty('LOCKOUT_RESET_LOGS');
+    var logs = [];
+    if (rawLogs) {
+      try { logs = JSON.parse(rawLogs); } catch (e) {}
+    }
+    logs.unshift({
+      name: name,
+      timestamp: timestamp,
+      source: source || 'manual'
+    });
+    if (logs.length > 50) logs = logs.slice(0, 50);
+    props.setProperty('LOCKOUT_RESET_LOGS', JSON.stringify(logs));
+  } catch (e) {
+    Logger.log('Could not write reset log: ' + e);
+  }
+}
+
+// ============================================================================
 // WEB APP API DISPATCHER (doGet & doPost)
 // ============================================================================
 
@@ -543,6 +648,13 @@ function doPost(e) {
 function executeApiRequest(action, name, pin, payload) {
   try {
     var ss = getSpreadsheet();
+
+    // 0. Protected admin action: clearLockout (authenticated via ADMIN_PASSWORD)
+    if (action === 'clearLockout') {
+      var targetName = payload.targetName || name || '';
+      var adminPassword = payload.adminPassword || pin || '';
+      return createJsonResponse(handleClearLockoutAction(targetName, adminPassword));
+    }
 
     // 1. Mandatory server-side authentication for ALL requests and actions
     var authResult = verifyCredentials(ss, name, pin);
