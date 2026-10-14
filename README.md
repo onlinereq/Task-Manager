@@ -34,4 +34,4 @@ This app has basic login protection to keep strangers from viewing or editing th
 
 6. Open `index.html` and start adding tasks.
 
-> Using your own web app URL keeps all progress stored safely in your own Google Sheet.
+> Your own web app URL and sheet store all progress data.
