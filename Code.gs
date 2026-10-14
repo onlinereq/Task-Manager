@@ -20,7 +20,7 @@ var CONFIG = {
   },
   DEFAULT_STATUSES: ['Register', 'In Progress', 'Review', 'Done'],
   VALID_STATES: ['Active', 'Completed', 'Archived'],
-  DATA_VERSION: 3,            // Increment integer to force instant client-side cache refresh
+  DATA_VERSION: 4,            // Increment integer to force instant client-side cache refresh
   MAX_FAILED_ATTEMPTS: 5,     // 5 failed attempts per username triggers lockout
   LOCKOUT_SECONDS: 900,       // 15 minutes lockout duration (900 seconds)
   FAILURE_DELAY_MS: 1200,     // Delay applied only on authentication failure
@@ -155,38 +155,70 @@ function unescapeCellValue(val) {
 }
 
 // ============================================================================
-// ONE-TIME SETUP FUNCTION
+// ONE-TIME SETUP FUNCTION (SAFE FOR REPEATED EXECUTION)
 // ============================================================================
 
 /**
- * Initializes all database tabs, formats, and starter data.
+ * This function is safe to run multiple times. It never deletes existing data.
+ * Initializes missing database tabs, verifies expected header columns, and applies formatting.
  */
 function setupSheet() {
   var ss = getSpreadsheet();
   ss.setSpreadsheetTimeZone(CONFIG.TIMEZONE);
+  var summaryLogs = [];
 
   // 1. Setup Users Tab
+  var existedUsers = !!ss.getSheetByName(CONFIG.SHEETS.USERS);
   var usersSheet = getOrCreateSheet(ss, CONFIG.SHEETS.USERS);
-  setupUsersSheet(usersSheet);
+  var usersResult = setupUsersSheet(usersSheet);
+  if (!existedUsers || usersResult.isBrandNew) {
+    summaryLogs.push('Users sheet: created new with 1 starter user (Alex Chen).');
+  } else {
+    var addedNote = usersResult.addedHeaders.length > 0 ? ' (added missing header(s): ' + usersResult.addedHeaders.join(', ') + ')' : '';
+    summaryLogs.push('Users sheet: already existed, ' + usersResult.rowCount + ' row(s) kept' + addedNote + '.');
+  }
 
   // 2. Setup Tasks Tab
+  var existedTasks = !!ss.getSheetByName(CONFIG.SHEETS.TASKS);
   var tasksSheet = getOrCreateSheet(ss, CONFIG.SHEETS.TASKS);
-  setupTasksSheet(tasksSheet);
+  var tasksResult = setupTasksSheet(tasksSheet);
+  if (!existedTasks || tasksResult.isBrandNew) {
+    summaryLogs.push('Tasks sheet: created new.');
+  } else {
+    var addedTaskNote = tasksResult.addedHeaders.length > 0 ? ' (added missing header(s): ' + tasksResult.addedHeaders.join(', ') + ')' : '';
+    summaryLogs.push('Tasks sheet: already existed, ' + tasksResult.rowCount + ' task(s) kept' + addedTaskNote + '.');
+  }
 
   // 3. Setup History Tab
+  var existedHistory = !!ss.getSheetByName(CONFIG.SHEETS.HISTORY);
   var historySheet = getOrCreateSheet(ss, CONFIG.SHEETS.HISTORY);
-  setupHistorySheet(historySheet);
+  var historyResult = setupHistorySheet(historySheet);
+  if (!existedHistory || historyResult.isBrandNew) {
+    summaryLogs.push('History sheet: created new.');
+  } else {
+    var addedHistNote = historyResult.addedHeaders.length > 0 ? ' (added missing header(s): ' + historyResult.addedHeaders.join(', ') + ')' : '';
+    summaryLogs.push('History sheet: already existed, ' + historyResult.rowCount + ' history row(s) kept' + addedHistNote + '.');
+  }
 
   // 4. Setup Settings Tab
+  var existedSettings = !!ss.getSheetByName(CONFIG.SHEETS.SETTINGS);
   var settingsSheet = getOrCreateSheet(ss, CONFIG.SHEETS.SETTINGS);
-  setupSettingsSheet(settingsSheet);
+  var settingsResult = setupSettingsSheet(settingsSheet);
+  if (!existedSettings || settingsResult.isBrandNew) {
+    summaryLogs.push('Settings sheet: created new with default statuses.');
+  } else {
+    summaryLogs.push('Settings sheet: already existed, ' + settingsResult.rowCount + ' status(es) kept.');
+  }
 
-  // 5. Clean default Sheet1 if present
+  // 5. Clean default Sheet1 only if completely empty and unused
   var allSheets = ss.getSheets();
   for (var i = 0; i < allSheets.length; i++) {
     var sheet = allSheets[i];
     if (sheet.getName().toLowerCase() === 'sheet1' && allSheets.length > 1) {
-      ss.deleteSheet(sheet);
+      if (sheet.getLastRow() === 0 && sheet.getLastColumn() === 0) {
+        ss.deleteSheet(sheet);
+        summaryLogs.push('Sheet1: removed (empty default tab).');
+      }
       break;
     }
   }
@@ -195,8 +227,13 @@ function setupSheet() {
   var cache = CacheService.getScriptCache();
   cache.remove('users_list');
   cache.remove('data_snapshot');
+  cache.remove('all_tasks_raw');
 
   SpreadsheetApp.flush();
+
+  var finalSummary = summaryLogs.join('\n');
+  Logger.log('setupSheet() Summary:\n' + finalSummary);
+  return finalSummary;
 }
 
 function getOrCreateSheet(ss, sheetName) {
@@ -207,26 +244,91 @@ function getOrCreateSheet(ss, sheetName) {
   return sheet;
 }
 
+/**
+ * Ensures all expected headers exist in row 1 of the sheet.
+ * Never touches or overwrites existing data rows (rows 2..N).
+ * If expected headers are missing, appends them to row 1.
+ * Returns an array of newly added header names.
+ */
+function ensureHeaderColumns(sheet, expectedHeaders, columnWidths) {
+  var addedHeaders = [];
+  var lastCol = sheet.getLastColumn();
+  var existingHeaders = [];
+
+  if (lastCol > 0 && sheet.getLastRow() > 0) {
+    var headerRowValues = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    for (var i = 0; i < headerRowValues.length; i++) {
+      existingHeaders.push(String(headerRowValues[i] || '').trim().toLowerCase());
+    }
+  }
+
+  // If sheet was empty (no row 1 at all)
+  if (existingHeaders.length === 0) {
+    sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
+    formatHeaderRow(sheet, expectedHeaders.length);
+    sheet.setFrozenRows(1);
+    if (columnWidths) {
+      for (var w = 0; w < columnWidths.length; w++) {
+        sheet.setColumnWidth(w + 1, columnWidths[w]);
+      }
+    }
+    return expectedHeaders.slice();
+  }
+
+  // If headers exist, check which expected headers are missing
+  var currentColCount = lastCol;
+  for (var h = 0; h < expectedHeaders.length; h++) {
+    var expectedName = expectedHeaders[h];
+    var normExpected = expectedName.toLowerCase();
+
+    // Check if this header already exists anywhere in row 1
+    var exists = existingHeaders.indexOf(normExpected) !== -1;
+    if (!exists) {
+      currentColCount++;
+      var newCell = sheet.getRange(1, currentColCount);
+      newCell.setValue(expectedName);
+      formatHeaderCell(newCell);
+      if (columnWidths && columnWidths[h]) {
+        sheet.setColumnWidth(currentColCount, columnWidths[h]);
+      }
+      addedHeaders.push(expectedName);
+      existingHeaders.push(normExpected);
+    }
+  }
+
+  // Ensure row 1 is frozen
+  try {
+    if (sheet.getFrozenRows() < 1) {
+      sheet.setFrozenRows(1);
+    }
+  } catch (e) {}
+
+  return addedHeaders;
+}
+
 function setupUsersSheet(sheet) {
   var headers = ['Name', 'PIN', 'Team', 'Status'];
-  sheet.clear();
-  sheet.appendRow(headers);
+  var widths = [180, 280, 160, 120];
+  var lastRow = sheet.getLastRow();
+  var isBrandNew = (lastRow === 0 && sheet.getLastColumn() === 0);
 
-  // Starter user with salted SHA-256 hash (default PIN: '1234')
-  var salt = getPinSalt();
-  var starterHash = hashPin('1234', salt);
-  sheet.appendRow(['Alex Chen', starterHash, 'Core Team', 'Active']);
+  var addedHeaders = ensureHeaderColumns(sheet, headers, widths);
 
-  formatHeaderRow(sheet, headers.length);
-  sheet.setFrozenRows(1);
-
-  sheet.setColumnWidth(1, 180); // Name
-  sheet.setColumnWidth(2, 280); // PIN Hash
-  sheet.setColumnWidth(3, 160); // Team
-  sheet.setColumnWidth(4, 120); // Status
+  if (isBrandNew) {
+    // Starter user with salted SHA-256 hash (default PIN: '1234')
+    var salt = getPinSalt();
+    var starterHash = hashPin('1234', salt);
+    sheet.appendRow(['Alex Chen', starterHash, 'Core Team', 'Active']);
+  }
 
   sheet.getRange(2, 2, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('@');
-  applyAlternatingColors(sheet, 1, 4);
+  applyAlternatingColors(sheet, 1, headers.length);
+
+  return {
+    isBrandNew: isBrandNew,
+    rowCount: Math.max(sheet.getLastRow() - 1, 0),
+    addedHeaders: addedHeaders
+  };
 }
 
 function setupTasksSheet(sheet) {
@@ -241,31 +343,26 @@ function setupTasksSheet(sheet) {
     'Created By',
     'CreatedAt',
     'Last Updated By',
-    'Last Updated At'
+    'Last Updated At',
+    'IsPrivate'
   ];
-  sheet.clear();
-  sheet.appendRow(headers);
+  var widths = [120, 220, 280, 140, 110, 110, 100, 120, 150, 120, 150, 100];
+  var lastRow = sheet.getLastRow();
+  var isBrandNew = (lastRow === 0 && sheet.getLastColumn() === 0);
 
-  formatHeaderRow(sheet, headers.length);
-  sheet.setFrozenRows(1);
-
-  sheet.setColumnWidth(1, 120); // Task ID
-  sheet.setColumnWidth(2, 220); // Task Name
-  sheet.setColumnWidth(3, 280); // Description
-  sheet.setColumnWidth(4, 140); // Assigned To
-  sheet.setColumnWidth(5, 110); // Deadline
-  sheet.setColumnWidth(6, 110); // Status
-  sheet.setColumnWidth(7, 100); // State
-  sheet.setColumnWidth(8, 120); // Created By
-  sheet.setColumnWidth(9, 150); // Created At
-  sheet.setColumnWidth(10, 120); // Last Updated By
-  sheet.setColumnWidth(11, 150); // Last Updated At
+  var addedHeaders = ensureHeaderColumns(sheet, headers, widths);
 
   sheet.getRange(2, 3, Math.max(sheet.getMaxRows() - 1, 1), 1).setWrap(true);
   sheet.getRange(2, 1, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('@');
 
   applyAlternatingColors(sheet, 1, headers.length);
   applyStatusConditionalFormatting(sheet, 6);
+
+  return {
+    isBrandNew: isBrandNew,
+    rowCount: Math.max(sheet.getLastRow() - 1, 0),
+    addedHeaders: addedHeaders
+  };
 }
 
 function setupHistorySheet(sheet) {
@@ -278,43 +375,63 @@ function setupHistorySheet(sheet) {
     'Updated By',
     'Timestamp'
   ];
-  sheet.clear();
-  sheet.appendRow(headers);
+  var widths = [140, 120, 220, 110, 300, 130, 160];
+  var lastRow = sheet.getLastRow();
+  var isBrandNew = (lastRow === 0 && sheet.getLastColumn() === 0);
 
-  formatHeaderRow(sheet, headers.length);
-  sheet.setFrozenRows(1);
-
-  sheet.setColumnWidth(1, 140); // History ID
-  sheet.setColumnWidth(2, 120); // Task ID
-  sheet.setColumnWidth(3, 220); // Task Name
-  sheet.setColumnWidth(4, 110); // Status
-  sheet.setColumnWidth(5, 300); // Note
-  sheet.setColumnWidth(6, 130); // Updated By
-  sheet.setColumnWidth(7, 160); // Timestamp
+  var addedHeaders = ensureHeaderColumns(sheet, headers, widths);
 
   sheet.getRange(2, 5, Math.max(sheet.getMaxRows() - 1, 1), 1).setWrap(true);
   sheet.getRange(2, 1, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('@');
   sheet.getRange(2, 2, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat('@');
 
   applyAlternatingColors(sheet, 1, headers.length);
+
+  return {
+    isBrandNew: isBrandNew,
+    rowCount: Math.max(sheet.getLastRow() - 1, 0),
+    addedHeaders: addedHeaders
+  };
 }
 
 function setupSettingsSheet(sheet) {
-  sheet.clear();
-  sheet.appendRow(['Status List']);
+  var headers = ['Status List'];
+  var widths = [180];
+  var lastRow = sheet.getLastRow();
+  var isBrandNew = (lastRow === 0 && sheet.getLastColumn() === 0);
 
-  formatHeaderRow(sheet, 1);
-  sheet.setFrozenRows(1);
-  sheet.setColumnWidth(1, 180);
+  var addedHeaders = ensureHeaderColumns(sheet, headers, widths);
 
-  for (var i = 0; i < CONFIG.DEFAULT_STATUSES.length; i++) {
-    sheet.appendRow([CONFIG.DEFAULT_STATUSES[i]]);
+  var statusCount = Math.max(sheet.getLastRow() - 1, 0);
+  if (statusCount === 0) {
+    for (var i = 0; i < CONFIG.DEFAULT_STATUSES.length; i++) {
+      sheet.appendRow([CONFIG.DEFAULT_STATUSES[i]]);
+    }
+    statusCount = CONFIG.DEFAULT_STATUSES.length;
   }
 
   applyAlternatingColors(sheet, 1, 1);
+
+  return {
+    isBrandNew: isBrandNew,
+    rowCount: statusCount,
+    addedHeaders: addedHeaders
+  };
+}
+
+function formatHeaderCell(cell) {
+  cell
+    .setBackground('#F2F4F7')
+    .setFontColor('#1D1D1F')
+    .setFontWeight('bold')
+    .setFontFamily('Arial')
+    .setFontSize(10)
+    .setVerticalAlignment('middle')
+    .setBorder(false, false, true, false, false, false, '#D0D5DD', SpreadsheetApp.BorderStyle.SOLID);
 }
 
 function formatHeaderRow(sheet, numColumns) {
+  if (!numColumns || numColumns <= 0) return;
   var headerRange = sheet.getRange(1, 1, 1, numColumns);
   headerRange
     .setBackground('#F2F4F7')
@@ -328,32 +445,53 @@ function formatHeaderRow(sheet, numColumns) {
 }
 
 function applyAlternatingColors(sheet, startCol, endCol) {
-  var range = sheet.getRange(1, startCol, Math.max(sheet.getMaxRows(), 2), endCol - startCol + 1);
-  range.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
+  try {
+    var existingBandings = sheet.getBandings();
+    if (!existingBandings || existingBandings.length === 0) {
+      var range = sheet.getRange(1, startCol, Math.max(sheet.getMaxRows(), 2), endCol - startCol + 1);
+      range.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
+    }
+  } catch (e) {}
 }
 
 function applyStatusConditionalFormatting(sheet, statusColIndex) {
-  var range = sheet.getRange(2, statusColIndex, Math.max(sheet.getMaxRows() - 1, 1), 1);
-  var rules = sheet.getConditionalFormatRules();
+  try {
+    var range = sheet.getRange(2, statusColIndex, Math.max(sheet.getMaxRows() - 1, 1), 1);
+    var rules = sheet.getConditionalFormatRules() || [];
 
-  var colorMap = [
-    { text: 'Register', bg: '#F2F4F7', font: '#475467' },
-    { text: 'In Progress', bg: '#EBF3FF', font: '#0071E3' },
-    { text: 'Review', bg: '#FEF3E6', font: '#B45309' },
-    { text: 'Done', bg: '#EDFBF0', font: '#1B7A34' }
-  ];
+    var existingRulesText = '';
+    for (var r = 0; r < rules.length; r++) {
+      var crit = rules[r].getBooleanCriteria();
+      if (crit) {
+        existingRulesText += crit.getCriteriaValues().join(',') + ';';
+      }
+    }
 
-  colorMap.forEach(function (cfg) {
-    var rule = SpreadsheetApp.newConditionalFormatRule()
-      .whenTextEqualTo(cfg.text)
-      .setBackground(cfg.bg)
-      .setFontColor(cfg.font)
-      .setRanges([range])
-      .build();
-    rules.push(rule);
-  });
+    var colorMap = [
+      { text: 'Register', bg: '#F2F4F7', font: '#475467' },
+      { text: 'In Progress', bg: '#EBF3FF', font: '#0071E3' },
+      { text: 'Review', bg: '#FEF3E6', font: '#B45309' },
+      { text: 'Done', bg: '#EDFBF0', font: '#1B7A34' }
+    ];
 
-  sheet.setConditionalFormatRules(rules);
+    var needsUpdate = false;
+    colorMap.forEach(function (cfg) {
+      if (existingRulesText.indexOf(cfg.text) === -1) {
+        var rule = SpreadsheetApp.newConditionalFormatRule()
+          .whenTextEqualTo(cfg.text)
+          .setBackground(cfg.bg)
+          .setFontColor(cfg.font)
+          .setRanges([range])
+          .build();
+        rules.push(rule);
+        needsUpdate = true;
+      }
+    });
+
+    if (needsUpdate) {
+      sheet.setConditionalFormatRules(rules);
+    }
+  } catch (e) {}
 }
 
 // ============================================================================
@@ -492,7 +630,9 @@ function getCachedUsers(ss) {
 
 function invalidateDataCache() {
   try {
-    CacheService.getScriptCache().remove('data_snapshot');
+    var cache = CacheService.getScriptCache();
+    cache.remove('data_snapshot');
+    cache.remove('all_tasks_raw');
   } catch (e) {}
 }
 
@@ -715,6 +855,11 @@ function executeApiRequest(action, name, pin, payload) {
           writeResponse = handleDeleteTask(ss, payload, currentUser);
           break;
 
+        case 'setPrivacy':
+        case 'togglePrivacy':
+          writeResponse = handleSetPrivacy(ss, payload, currentUser);
+          break;
+
         case 'addStatus':
           writeResponse = handleAddStatus(ss, payload, currentUser);
           break;
@@ -780,8 +925,27 @@ function handleStart(ss, payload, currentUser) {
 
   var statuses = fetchStatuses(ss);
   var activeUsers = fetchActiveUsers(ss); // PINs stripped
-  var allTasks = fetchTasks(ss);
-  var allHistory = fetchHistory(ss);
+  var rawTasks = fetchTasks(ss);
+  var rawHistory = fetchHistory(ss);
+
+  // Filter tasks: include if NOT private OR created by currentUser
+  var currentUserName = (currentUser && currentUser.name ? currentUser.name : '').trim().toLowerCase();
+  var allTasks = rawTasks.filter(function (t) {
+    if (!t.isPrivate) return true;
+    return (t.createdBy || '').trim().toLowerCase() === currentUserName;
+  });
+
+  // Allowed task IDs map for this user
+  var allowedTaskIds = {};
+  allTasks.forEach(function (t) {
+    allowedTaskIds[String(t.taskId).toLowerCase()] = true;
+  });
+
+  // Filter history: only include history for tasks visible to this user
+  var allHistory = rawHistory.filter(function (h) {
+    return !!allowedTaskIds[String(h.taskId).toLowerCase()];
+  });
+
   var serverTaskIds = allTasks.map(function (t) { return t.taskId; });
 
   if (forceRefresh || !lastSync || allTasks.length === 0) {
@@ -837,13 +1001,31 @@ function handleStart(ss, payload, currentUser) {
  */
 function handleExport(ss, currentUser) {
   var serverTime = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, CONFIG.DATETIME_FORMAT);
+  var rawTasks = fetchTasks(ss);
+  var rawHistory = fetchHistory(ss);
+  var currentUserName = (currentUser && currentUser.name ? currentUser.name : '').trim().toLowerCase();
+
+  var tasks = rawTasks.filter(function (t) {
+    if (!t.isPrivate) return true;
+    return (t.createdBy || '').trim().toLowerCase() === currentUserName;
+  });
+
+  var allowedTaskIds = {};
+  tasks.forEach(function (t) {
+    allowedTaskIds[String(t.taskId).toLowerCase()] = true;
+  });
+
+  var history = rawHistory.filter(function (h) {
+    return !!allowedTaskIds[String(h.taskId).toLowerCase()];
+  });
+
   return {
     ok: true,
     success: true,
     user: currentUser,
     exportedAt: serverTime,
-    tasks: fetchTasks(ss),
-    history: fetchHistory(ss),
+    tasks: tasks,
+    history: history,
     statuses: fetchStatuses(ss)
   };
 }
@@ -886,6 +1068,7 @@ function handleCreateTask(ss, payload, currentUser) {
   var taskId = clientTaskId || ('TSK-' + now.getTime().toString(36).toUpperCase());
   var initialStatus = 'Register';
   var initialState = 'Active';
+  var isPrivate = (payload.isPrivate === true || String(payload.isPrivate).trim().toLowerCase() === 'true' || payload.isPrivate === 1);
 
   // Apply formula injection prevention
   tasksSheet.appendRow([
@@ -899,7 +1082,8 @@ function handleCreateTask(ss, payload, currentUser) {
     sanitizeCellValue(currentUser.name),
     sanitizeCellValue(formattedNow),
     sanitizeCellValue(currentUser.name),
-    sanitizeCellValue(formattedNow)
+    sanitizeCellValue(formattedNow),
+    isPrivate ? true : false
   ]);
 
   // First history log
@@ -928,7 +1112,8 @@ function handleCreateTask(ss, payload, currentUser) {
       createdBy: currentUser.name,
       createdAt: formattedNow,
       lastUpdatedBy: currentUser.name,
-      lastUpdatedAt: formattedNow
+      lastUpdatedAt: formattedNow,
+      isPrivate: isPrivate
     },
     historyEntry: {
       historyId: historyId,
@@ -981,6 +1166,19 @@ function handleUpdateTask(ss, payload, currentUser) {
     return { ok: false, success: false, message: 'Task ID not found.' };
   }
 
+  // Check privacy authorization: private tasks can only be updated by their creator
+  var rawPrivate = tasksSheet.getRange(taskRowIndex, 12).getValue();
+  var isPrivate = (rawPrivate === true || String(rawPrivate).trim().toLowerCase() === 'true' || rawPrivate === 1 || String(rawPrivate).trim() === '1');
+  var createdBy = unescapeCellValue(tasksSheet.getRange(taskRowIndex, 8).getValue() || '');
+  if (isPrivate && createdBy.trim().toLowerCase() !== currentUser.name.trim().toLowerCase()) {
+    return {
+      ok: false,
+      success: false,
+      error: 'forbidden',
+      message: 'Private tasks can only be updated by their creator.'
+    };
+  }
+
   var now = new Date();
   var formattedNow = Utilities.formatDate(now, CONFIG.TIMEZONE, CONFIG.DATETIME_FORMAT);
 
@@ -1004,7 +1202,7 @@ function handleUpdateTask(ss, payload, currentUser) {
     sanitizeCellValue(formattedNow)
   ]);
 
-  var updatedRowValues = tasksSheet.getRange(taskRowIndex, 1, 1, 11).getValues()[0];
+  var updatedRowValues = tasksSheet.getRange(taskRowIndex, 1, 1, 12).getValues()[0];
   var updatedTask = mapRowToTask(updatedRowValues);
 
   return {
@@ -1084,7 +1282,7 @@ function handleSetState(ss, payload, currentUser) {
     sanitizeCellValue(formattedNow)
   ]);
 
-  var updatedRowValues = tasksSheet.getRange(taskRowIndex, 1, 1, 11).getValues()[0];
+  var updatedRowValues = tasksSheet.getRange(taskRowIndex, 1, 1, 12).getValues()[0];
   var updatedTask = mapRowToTask(updatedRowValues);
 
   return {
@@ -1150,6 +1348,83 @@ function handleDeleteTask(ss, payload, currentUser) {
     ok: true,
     success: true,
     taskId: taskId
+  };
+}
+
+/**
+ * Action: setPrivacy / togglePrivacy
+ * Authorization rule: ONLY THE CREATOR (createdBy) can change task privacy.
+ */
+function handleSetPrivacy(ss, payload, currentUser) {
+  var taskId = String(payload.taskId || '').trim();
+  var newIsPrivate = (payload.isPrivate === true || String(payload.isPrivate).trim().toLowerCase() === 'true' || payload.isPrivate === 1);
+  var clientHistoryId = payload.historyId ? String(payload.historyId).trim() : '';
+
+  if (!taskId) {
+    return { ok: false, success: false, message: 'Task ID is required.' };
+  }
+
+  var tasksSheet = ss.getSheetByName(CONFIG.SHEETS.TASKS);
+  var historySheet = ss.getSheetByName(CONFIG.SHEETS.HISTORY);
+
+  var taskRowIndex = findRowIndexByColumnValue(tasksSheet, 1, taskId);
+  if (taskRowIndex === -1) {
+    return { ok: false, success: false, message: 'Task ID not found.' };
+  }
+
+  // Authorization: Only the creator can change privacy
+  var createdBy = unescapeCellValue(tasksSheet.getRange(taskRowIndex, 8).getValue() || '');
+  if (createdBy.trim().toLowerCase() !== currentUser.name.trim().toLowerCase()) {
+    return {
+      ok: false,
+      success: false,
+      error: 'forbidden',
+      message: 'Only the task creator (' + createdBy + ') can change privacy.'
+    };
+  }
+
+  var now = new Date();
+  var formattedNow = Utilities.formatDate(now, CONFIG.TIMEZONE, CONFIG.DATETIME_FORMAT);
+
+  var canonicalTaskId = unescapeCellValue(tasksSheet.getRange(taskRowIndex, 1).getValue() || taskId);
+  var taskName = unescapeCellValue(tasksSheet.getRange(taskRowIndex, 2).getValue() || '');
+  var currentStatus = unescapeCellValue(tasksSheet.getRange(taskRowIndex, 6).getValue() || '');
+
+  // Update IsPrivate (col 12), Last Updated By (col 10), Last Updated At (col 11)
+  tasksSheet.getRange(taskRowIndex, 12).setValue(newIsPrivate ? true : false);
+  tasksSheet.getRange(taskRowIndex, 10).setValue(sanitizeCellValue(currentUser.name));
+  tasksSheet.getRange(taskRowIndex, 11).setValue(sanitizeCellValue(formattedNow));
+
+  var historyId = clientHistoryId || ('HIST-' + now.getTime().toString(36).toUpperCase());
+  var privacyLabel = newIsPrivate ? 'Private (Only Me)' : 'Public (Shared with team)';
+  var logNote = 'Privacy changed to ' + privacyLabel;
+
+  historySheet.appendRow([
+    sanitizeCellValue(historyId),
+    sanitizeCellValue(canonicalTaskId),
+    sanitizeCellValue(taskName),
+    sanitizeCellValue(currentStatus),
+    sanitizeCellValue(logNote),
+    sanitizeCellValue(currentUser.name),
+    sanitizeCellValue(formattedNow)
+  ]);
+
+  var updatedRowValues = tasksSheet.getRange(taskRowIndex, 1, 1, 12).getValues()[0];
+  var updatedTask = mapRowToTask(updatedRowValues);
+
+  return {
+    ok: true,
+    success: true,
+    task: updatedTask,
+    historyEntry: {
+      historyId: historyId,
+      taskId: canonicalTaskId,
+      taskName: taskName,
+      status: currentStatus,
+      note: logNote,
+      updatedBy: currentUser.name,
+      timestamp: formattedNow
+    }
   };
 }
 
@@ -1289,17 +1564,29 @@ function handleSaveStatuses(ss, payload, currentUser) {
     sheet = ss.insertSheet(CONFIG.SHEETS.SETTINGS);
   }
 
-  sheet.clear();
-  sheet.appendRow(['Status List']);
+  // Ensure header in A1
+  sheet.getRange(1, 1).setValue('Status List');
+  formatHeaderRow(sheet, 1);
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 180);
+
+  // Clear existing status rows in column A (rows 2 and downwards) without wiping the sheet
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, 1).clearContent();
+  }
+
+  var validStatuses = [];
   for (var i = 0; i < statuses.length; i++) {
     var s = String(statuses[i] || '').trim();
-    if (s) {
-      sheet.appendRow([sanitizeCellValue(s)]);
+    if (s && validStatuses.indexOf(s) === -1) {
+      validStatuses.push([sanitizeCellValue(s)]);
     }
   }
 
-  formatHeaderRow(sheet, 1);
-  sheet.setFrozenRows(1);
+  if (validStatuses.length > 0) {
+    sheet.getRange(2, 1, validStatuses.length, 1).setValues(validStatuses);
+  }
 
   return {
     ok: true,
@@ -1313,6 +1600,14 @@ function handleSaveStatuses(ss, payload, currentUser) {
 // ============================================================================
 
 function fetchTasks(ss) {
+  var cache = CacheService.getScriptCache();
+  try {
+    var cached = cache.get('all_tasks_raw');
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {}
+
   var sheet = ss.getSheetByName(CONFIG.SHEETS.TASKS);
   if (!sheet) return [];
 
@@ -1326,10 +1621,20 @@ function fetchTasks(ss) {
       tasks.push(task);
     }
   }
+
+  try {
+    var jsonStr = JSON.stringify(tasks);
+    if (jsonStr.length < 95000) {
+      cache.put('all_tasks_raw', jsonStr, CONFIG.CACHE_SNAPSHOT_SEC);
+    }
+  } catch (e) {}
+
   return tasks;
 }
 
 function mapRowToTask(row) {
+  var rawPrivate = row[11];
+  var isPrivate = (rawPrivate === true || String(rawPrivate).trim().toLowerCase() === 'true' || rawPrivate === 1 || String(rawPrivate).trim() === '1');
   return {
     taskId: unescapeCellValue(row[0]),
     taskName: unescapeCellValue(row[1]),
@@ -1341,7 +1646,8 @@ function mapRowToTask(row) {
     createdBy: unescapeCellValue(row[7]),
     createdAt: formatCellDate(row[8], CONFIG.DATETIME_FORMAT),
     lastUpdatedBy: unescapeCellValue(row[9]),
-    lastUpdatedAt: formatCellDate(row[10], CONFIG.DATETIME_FORMAT)
+    lastUpdatedAt: formatCellDate(row[10], CONFIG.DATETIME_FORMAT),
+    isPrivate: isPrivate
   };
 }
 
