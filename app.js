@@ -815,7 +815,6 @@
     detailPrivacyToggleWrapper: document.getElementById('detail-privacy-toggle-wrapper'),
     detailShareTeamCheckbox: document.getElementById('detail-share-team-checkbox'),
     detailOverduePill: document.getElementById('detail-overdue-pill'),
-    btnEditTask: document.getElementById('btn-edit-task'),
     btnMarkComplete: document.getElementById('btn-mark-complete'),
     btnRestoreTask: document.getElementById('btn-restore-task'),
     btnDeleteTask: document.getElementById('btn-delete-task'),
@@ -1669,14 +1668,6 @@
 
     var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
     var isCreator = task.createdBy && task.createdBy.trim().toLowerCase() === currentUserName;
-    if (el.btnEditTask) {
-      if (isCreator && task.state !== 'Archived') {
-        el.btnEditTask.classList.remove('hidden');
-      } else {
-        el.btnEditTask.classList.add('hidden');
-      }
-    }
-
     if (el.detailPrivacyToggleWrapper && el.detailShareTeamCheckbox) {
       if (isCreator) {
         el.detailPrivacyToggleWrapper.classList.remove('hidden');
@@ -3413,11 +3404,6 @@
 
     // Modal controls
     el.btnOpenNewTask.addEventListener('click', openNewTaskModal);
-    if (el.btnEditTask) {
-      el.btnEditTask.addEventListener('click', function () {
-        if (state.selectedTaskId) openEditTaskModal(state.selectedTaskId);
-      });
-    }
     el.btnCloseModal.addEventListener('click', closeNewTaskModal);
     el.btnCancelModal.addEventListener('click', closeNewTaskModal);
     el.newTaskForm.addEventListener('submit', handleCreateTaskSubmit);
