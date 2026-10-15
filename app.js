@@ -353,13 +353,129 @@
     savePendingActions(list);
   }
 
+  var isSyncingQueue = false;
+  var inFlightBatchRequestIds = new Set();
+
+  /**
+   * Checks if the user is actively mid-edit:
+   * Typing in title, description, notes, or any other input/textarea/editable field,
+   * or has the task modal open, or is dragging/updating.
+   */
+  function isUserMidEdit() {
+    if (state.isCreatingTask || state.isUpdatingStatus || state.isDragging) {
+      return true;
+    }
+    if (el.taskModal && !el.taskModal.classList.contains('hidden')) {
+      return true;
+    }
+    var ae = document.activeElement;
+    if (ae && ae !== document.body) {
+      var tag = (ae.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || ae.isContentEditable) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Syncs the local pending-actions queue with the server.
+   * - Does nothing if queue is empty.
+   * - Skips if user is actively mid-edit.
+   * - Freezes current batch so new actions added mid-send are deferred to next cycle.
+   */
+  async function syncPendingQueue() {
+    if (isSyncingQueue) return;
+    if (!state.currentUser || state.startupInProgress) return;
+
+    var allPending = getPendingActions();
+    if (!allPending || allPending.length === 0) {
+      return; // Queue is empty: DO NOTHING. No request sent, zero server calls.
+    }
+
+    if (isUserMidEdit()) {
+      return; // User is actively typing or editing: skip this cycle and check on next tick
+    }
+
+    // Freeze in-flight batch: snapshot so new actions added mid-send go to next cycle
+    var batch = allPending.slice();
+    var batchRequestIds = new Set(batch.map(function (item) { return item.requestId; }));
+    inFlightBatchRequestIds = batchRequestIds;
+    isSyncingQueue = true;
+
+    updateSyncStatus('syncing');
+
+    try {
+      if (batch.length === 1) {
+        var single = batch[0];
+        var res = await apiCall(single.action, single.payload);
+
+        // Security check
+        if (res && (res.error === 'unauthorized' || res.error === 'locked')) {
+          handleAuthFailureResponse(res);
+          return;
+        }
+
+        if (res && res.ok && res.success) {
+          removePendingAction(single.requestId);
+          updateSyncStatus('synced');
+        } else if (res && res.error === 'forbidden') {
+          removePendingAction(single.requestId);
+          updateSyncStatus('error');
+          showAlertModal(res.message || 'Authorization Denied', 'Authorization Denied');
+        } else {
+          // server_busy, network error, timeout: retain in queue for next cycle
+          updateSyncStatus('error');
+        }
+      } else {
+        // Send all pending actions together
+        var batchPayload = {
+          actions: batch.map(function (item) {
+            return {
+              action: item.action,
+              requestId: item.requestId,
+              payload: item.payload
+            };
+          })
+        };
+        var res = await apiCall('batchActions', batchPayload);
+
+        if (res && (res.error === 'unauthorized' || res.error === 'locked')) {
+          handleAuthFailureResponse(res);
+          return;
+        }
+
+        if (res && res.ok && res.success) {
+          // Remove ONLY the actions that were in this batch.
+          // New actions added mid-send remain in queue for next cycle!
+          var remaining = getPendingActions().filter(function (act) {
+            return !batchRequestIds.has(act.requestId);
+          });
+          savePendingActions(remaining);
+          updateSyncStatus('synced');
+        } else {
+          // server_busy, timeout, or network error: retain in queue for next cycle
+          updateSyncStatus('error');
+        }
+      }
+    } catch (e) {
+      updateSyncStatus('error');
+    } finally {
+      inFlightBatchRequestIds.clear();
+      isSyncingQueue = false;
+    }
+  }
+
+  function flushPendingActions() {
+    return syncPendingQueue();
+  }
+
   /**
    * Executes a user mutation action with:
    * 1. Persistence in localStorage (tagged with unique requestId)
-   * 2. Automatic retry (up to 3 times with progressive delay) on server_busy / timeout / network_error
-   * 3. No rollback during transient retries
+   * 2. In-flight batch isolation (new actions queued for next cycle if sync in progress)
+   * 3. Automatic retry (up to 3 times with progressive delay) on server_busy / timeout / network_error
    * 4. Immediate rollback & rejection on genuine security failure (unauthorized, locked, forbidden)
-   * 5. Clear error message on exhaustion
    */
   async function executeUserActionWithRetry(options) {
     var actionName = options.action;
@@ -383,19 +499,29 @@
     };
     addPendingAction(pendingItem);
 
+    // If a sync batch is currently in flight, don't mix into same batch mid-send.
+    // It's saved in queue and will go out on next cycle!
+    if (isSyncingQueue) {
+      return;
+    }
+
+    // If user is actively typing or editing, defer send to the next 60s cycle
+    if (isUserMidEdit()) {
+      return;
+    }
+
     async function attempt(retryCount) {
       updateSyncStatus('saving');
       var res = await apiCall(actionName, payload);
 
       // 1. Strict Security Rejection (Requirement 8):
-      // Genuine unauthorized or locked MUST block immediately, roll back UI, prompt re-login, no retries!
       if (res && (res.error === 'unauthorized' || res.error === 'locked')) {
         removePendingAction(requestId);
         handleAuthFailureResponse(res, rollbackFn);
         return;
       }
 
-      // 2. Permission failure (e.g. non-owner trying to edit/delete another person's task)
+      // 2. Permission failure
       if (res && res.error === 'forbidden') {
         removePendingAction(requestId);
         if (typeof rollbackFn === 'function') {
@@ -416,7 +542,7 @@
         return;
       }
 
-      // 4. Transient failure (server_busy, network error, timeout, or temporary server glitch)
+      // 4. Transient failure (server_busy, network error, timeout)
       var isTransient = (!res || res.error === 'server_busy' || res.error === 'busy' || res.error === 'network_error' || res.ok === false);
       if (isTransient && retryCount < maxRetries) {
         var nextRetry = retryCount + 1;
@@ -429,44 +555,11 @@
         return;
       }
 
-      // 5. Retries exhausted
-      removePendingAction(requestId);
-      if (typeof rollbackFn === 'function') {
-        try { rollbackFn(); } catch (e) {}
-      }
+      // 5. Retries exhausted: retain in pending queue for next 60s cycle rather than losing it
       updateSyncStatus('error');
-      var reason = (res && res.message) ? res.message : 'server connection issue';
-      showAlertModal("Could not save '" + taskName + "' (" + reason + "). Please check your connection or try again.", "Action Failed");
     }
 
     attempt(0);
-  }
-
-  async function flushPendingActions() {
-    if (!state.currentUser) return;
-    var pending = getPendingActions();
-    if (!pending || pending.length === 0) return;
-
-    for (var i = 0; i < pending.length; i++) {
-      var item = pending[i];
-      try {
-        var res = await apiCall(item.action, item.payload);
-        if (res && (res.error === 'unauthorized' || res.error === 'locked')) {
-          removePendingAction(item.requestId);
-          handleAuthFailureResponse(res);
-          return;
-        }
-        if (res && res.ok && res.success) {
-          removePendingAction(item.requestId);
-        } else if (res && res.error === 'forbidden') {
-          removePendingAction(item.requestId);
-        }
-      } catch (err) {}
-    }
-    var remaining = getPendingActions();
-    if (remaining.length === 0) {
-      updateSyncStatus('synced');
-    }
   }
 
   // ==========================================================================
@@ -617,7 +710,8 @@
     filterType: 'ALL',       // 'ALL' | 'PERSON' | 'COMPLETED' | 'ARCHIVED'
     selectedTaskId: null,
     searchQuery: '',
-    syncTimer: null,
+    syncTimer: null,              // 60-second pending queue check
+    sessionCheckTimer: null,      // 10-minute session validity check
     consecutiveSyncAuthFailures: 0,
     startupInProgress: false,
     undoTimeout: null,
@@ -625,6 +719,7 @@
     contextMenuTaskId: null,
     isCreatingTask: false,
     isUpdatingStatus: false,
+    isDragging: false,
     pendingStateTasks: new Set(),
     lastRenderedTaskId: null
   };
@@ -969,6 +1064,7 @@
       // Render Dashboard
       renderAll();
       startPeriodicSync();
+      startSessionValidityCheck();
       flushPendingActions();
 
     } catch (failureErr) {
@@ -987,7 +1083,7 @@
   }
 
   // ==========================================================================
-  // 6. BACKGROUND QUIET SYNC (DELTA SYNC)
+  // 6. BACKGROUND QUIET SYNC (60s QUEUE CHECK & 10m SESSION CHECK)
   // ==========================================================================
   function updateSyncStatus(status) {
     if (!el.syncIndicator) return;
@@ -1003,11 +1099,48 @@
     }
   }
 
+  /**
+   * 60-Second Background Sync:
+   * 1. Checks local pending-actions queue first.
+   * 2. If queue is empty: DO NOTHING. Zero requests sent!
+   * 3. If queue has items AND user is not mid-edit: syncs the queue (send all pending actions together).
+   * 4. If user is mid-edit at that moment: skips this cycle and checks again on next 60s tick.
+   */
   async function syncQuietly() {
     if (!state.currentUser || state.startupInProgress) return;
-    updateSyncStatus('syncing');
 
-    var res = await apiCall('sync', { lastSync: DataService.lastSync });
+    // 1. Check local pending-actions queue first
+    var pending = getPendingActions();
+    if (!pending || pending.length === 0) {
+      // Empty queue: DO NOTHING. No request sent, no server call at all.
+      return;
+    }
+
+    // 2. If user is actively mid-edit, skip this cycle and check on next 60s tick
+    if (isUserMidEdit()) {
+      return;
+    }
+
+    // 3. Sync the queue now — send all pending actions together
+    await syncPendingQueue();
+  }
+
+  function startPeriodicSync() {
+    if (state.syncTimer) clearInterval(state.syncTimer);
+    state.syncTimer = setInterval(function () {
+      syncQuietly();
+    }, 60000);
+  }
+
+  /**
+   * Separate, less frequent Session-Validity Check (every 10 minutes):
+   * Runs regardless of queue state since it's a security check, not a data sync.
+   * Does not merge into the 60s queue check.
+   */
+  async function checkSessionValidity() {
+    if (!state.currentUser || state.startupInProgress) return;
+
+    var res = await apiCall('sync', { lastSync: DataService.lastSync, checkOnly: true });
 
     // 1. Account locked: prompt re-login / locked modal immediately
     if (res && res.error === 'locked') {
@@ -1018,15 +1151,12 @@
 
     // 2. Transient errors (server_busy, network_error, timeout): NEVER log out
     if (!res || res.error === 'server_busy' || res.error === 'network_error' || res.error === 'busy') {
-      updateSyncStatus('error');
-      // Do not count towards unauthorized, retry silently on next cycle
       return;
     }
 
     // 3. Genuine unauthorized: require 3 consecutive occurrences before kicking out
     if (res.error === 'unauthorized' || (res.ok === false && res.error === 'unauthorized')) {
       state.consecutiveSyncAuthFailures = (state.consecutiveSyncAuthFailures || 0) + 1;
-      updateSyncStatus('error');
       if (state.consecutiveSyncAuthFailures >= 3) {
         state.consecutiveSyncAuthFailures = 0;
         handleAuthFailureResponse(res);
@@ -1034,22 +1164,19 @@
       return;
     }
 
-    // 4. Success
+    // 4. Success: reset failure counter, and load new data if delta available
     state.consecutiveSyncAuthFailures = 0;
     if (res && res.success && res.data) {
       DataService.loadSyncData(res.data);
-      updateSyncStatus('synced');
       renderAll(true);
-    } else {
-      updateSyncStatus('error');
     }
   }
 
-  function startPeriodicSync() {
-    if (state.syncTimer) clearInterval(state.syncTimer);
-    state.syncTimer = setInterval(function () {
-      syncQuietly();
-    }, 60000);
+  function startSessionValidityCheck() {
+    if (state.sessionCheckTimer) clearInterval(state.sessionCheckTimer);
+    state.sessionCheckTimer = setInterval(function () {
+      checkSessionValidity();
+    }, 10 * 60 * 1000); // 10 minutes (less frequent security check)
   }
 
   // ==========================================================================
@@ -1090,6 +1217,7 @@
 
   function showLogin() {
     if (state.syncTimer) clearInterval(state.syncTimer);
+    if (state.sessionCheckTimer) clearInterval(state.sessionCheckTimer);
     el.loginScreen.classList.remove('hidden');
     el.startupScreen.classList.add('hidden');
     el.appContainer.classList.add('hidden');
@@ -1167,6 +1295,7 @@
 
   function logout() {
     if (state.syncTimer) clearInterval(state.syncTimer);
+    if (state.sessionCheckTimer) clearInterval(state.sessionCheckTimer);
     state.currentUser = null;
     state.selectedTaskId = null;
     state.lastRenderedTaskId = null;
