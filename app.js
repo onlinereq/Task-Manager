@@ -732,7 +732,8 @@
     isDragging: false,
     pendingStateTasks: new Set(),
     lastRenderedTaskId: null,
-    modalAssigneePrevious: null
+    modalAssigneePrevious: null,
+    editingTaskId: null
   };
 
   var el = {
@@ -814,6 +815,7 @@
     detailPrivacyToggleWrapper: document.getElementById('detail-privacy-toggle-wrapper'),
     detailShareTeamCheckbox: document.getElementById('detail-share-team-checkbox'),
     detailOverduePill: document.getElementById('detail-overdue-pill'),
+    btnEditTask: document.getElementById('btn-edit-task'),
     btnMarkComplete: document.getElementById('btn-mark-complete'),
     btnRestoreTask: document.getElementById('btn-restore-task'),
     btnDeleteTask: document.getElementById('btn-delete-task'),
@@ -837,12 +839,16 @@
     // Modal
     newTaskModal: document.getElementById('new-task-modal'),
     newTaskForm: document.getElementById('new-task-form'),
+    modalHeading: document.getElementById('modal-heading'),
     taskNameInput: document.getElementById('task-name-input'),
     taskAssigneeInput: document.getElementById('task-assignee-input'),
     taskDeadlineInput: document.getElementById('task-deadline-input'),
     taskDeadlineHint: document.getElementById('task-deadline-hint'),
+    taskEditStatusGroup: document.getElementById('task-edit-status-group'),
+    taskStatusInput: document.getElementById('task-status-input'),
     taskDescInput: document.getElementById('task-desc-input'),
     taskShareTeamInput: document.getElementById('task-share-team-input'),
+    taskModalInfoCallout: document.getElementById('task-modal-info-callout'),
     taskNameError: document.getElementById('task-name-error'),
     taskAssigneeError: document.getElementById('task-assignee-error'),
     taskDeadlineError: document.getElementById('task-deadline-error'),
@@ -854,6 +860,7 @@
     // Context Menu & Toast
     taskContextMenu: document.getElementById('task-context-menu'),
     ctxOpenTask: document.getElementById('ctx-open-task'),
+    ctxEditTask: document.getElementById('ctx-edit-task'),
     ctxChangeStatus: document.getElementById('ctx-change-status'),
     ctxMarkComplete: document.getElementById('ctx-mark-complete'),
     ctxRestoreTask: document.getElementById('ctx-restore-task'),
@@ -1662,6 +1669,14 @@
 
     var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
     var isCreator = task.createdBy && task.createdBy.trim().toLowerCase() === currentUserName;
+    if (el.btnEditTask) {
+      if (isCreator && task.state !== 'Archived') {
+        el.btnEditTask.classList.remove('hidden');
+      } else {
+        el.btnEditTask.classList.add('hidden');
+      }
+    }
+
     if (el.detailPrivacyToggleWrapper && el.detailShareTeamCheckbox) {
       if (isCreator) {
         el.detailPrivacyToggleWrapper.classList.remove('hidden');
@@ -2496,10 +2511,7 @@
             DataService.tasks[idx].isPrivate = (res.task.isPrivate === true);
           }
         }
-        if (res && res.historyEntry) {
-          DataService.history.unshift(res.historyEntry);
-          DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
-        }
+        // Public/Private toggle is silent: no Activity History entry created
         DataService.saveToStorage();
         renderAll();
       }
@@ -2541,6 +2553,7 @@
   }
 
   function openNewTaskModal() {
+    state.editingTaskId = null;
     el.newTaskForm.reset();
     el.taskNameError.textContent = '';
     el.taskAssigneeError.textContent = '';
@@ -2550,6 +2563,11 @@
     el.taskAssigneeInput.classList.remove('is-invalid');
     el.taskDeadlineInput.classList.remove('is-invalid');
     el.taskDescInput.classList.remove('is-invalid');
+
+    if (el.modalHeading) el.modalHeading.textContent = 'Create New Task';
+    if (el.btnSaveTask) el.btnSaveTask.textContent = 'Create Task';
+    if (el.taskEditStatusGroup) el.taskEditStatusGroup.classList.add('hidden');
+    if (el.taskModalInfoCallout) el.taskModalInfoCallout.classList.remove('hidden');
 
     el.taskNameInput.value = '';
     el.taskDescInput.value = '';
@@ -2604,6 +2622,81 @@
     el.taskNameInput.focus();
   }
 
+  function openEditTaskModal(taskId) {
+    var task = DataService.getTaskById(taskId);
+    if (!task) return;
+
+    var currentUserName = (state.currentUser && state.currentUser.name) ? state.currentUser.name.trim().toLowerCase() : '';
+    var isCreator = task.createdBy && task.createdBy.trim().toLowerCase() === currentUserName;
+    if (!isCreator) return;
+
+    state.editingTaskId = task.taskId;
+    el.newTaskForm.reset();
+    el.taskNameError.textContent = '';
+    el.taskAssigneeError.textContent = '';
+    el.taskDeadlineError.textContent = '';
+    if (el.taskDescError) el.taskDescError.textContent = '';
+    el.taskNameInput.classList.remove('is-invalid');
+    el.taskAssigneeInput.classList.remove('is-invalid');
+    el.taskDeadlineInput.classList.remove('is-invalid');
+    el.taskDescInput.classList.remove('is-invalid');
+
+    if (el.modalHeading) el.modalHeading.textContent = 'Edit Task';
+    if (el.btnSaveTask) el.btnSaveTask.textContent = 'Save Changes';
+    if (el.taskEditStatusGroup) el.taskEditStatusGroup.classList.remove('hidden');
+    if (el.taskModalInfoCallout) el.taskModalInfoCallout.classList.add('hidden');
+
+    el.taskNameInput.value = task.taskName || '';
+    el.taskDescInput.value = task.description || '';
+    el.taskDeadlineInput.value = task.deadline || '';
+    updateDeadlineHint(el.taskDeadlineInput.value);
+
+    // Populate Assignees and select current assignee
+    el.taskAssigneeInput.innerHTML = '';
+    if (DataService.users.length > 0) {
+      DataService.users.forEach(function (user) {
+        var opt = document.createElement('option');
+        opt.value = user.name;
+        opt.textContent = user.name;
+        if (user.name.toLowerCase() === (task.assignedTo || '').toLowerCase()) {
+          opt.selected = true;
+        }
+        el.taskAssigneeInput.appendChild(opt);
+      });
+    } else if (task.assignedTo) {
+      var optA = document.createElement('option');
+      optA.value = task.assignedTo;
+      optA.textContent = task.assignedTo;
+      optA.selected = true;
+      el.taskAssigneeInput.appendChild(optA);
+    }
+    el.taskAssigneeInput.value = task.assignedTo || '';
+
+    // Populate Statuses and select current status
+    if (el.taskStatusInput) {
+      el.taskStatusInput.innerHTML = '';
+      DataService.statuses.forEach(function (st) {
+        var optSt = document.createElement('option');
+        optSt.value = st;
+        optSt.textContent = st;
+        if (st.toLowerCase() === (task.status || '').toLowerCase()) {
+          optSt.selected = true;
+        }
+        el.taskStatusInput.appendChild(optSt);
+      });
+      el.taskStatusInput.value = task.status || (DataService.statuses[0] || 'Register');
+    }
+
+    if (el.taskShareTeamInput) {
+      el.taskShareTeamInput.checked = !task.isPrivate;
+    }
+    state.modalAssigneePrevious = task.assignedTo || '';
+    updateNewTaskModalPrivacy(!task.isPrivate);
+
+    el.newTaskModal.classList.remove('hidden');
+    el.taskNameInput.focus();
+  }
+
   function updateNewTaskModalPrivacy(isShared) {
     var modalOverlay = el.newTaskModal;
     var modalDialog = document.getElementById('new-task-modal-dialog') || (modalOverlay ? modalOverlay.querySelector('.modal-dialog') : null);
@@ -2630,11 +2723,21 @@
   function closeNewTaskModal() {
     el.newTaskModal.classList.add('hidden');
     state.modalAssigneePrevious = null;
+    state.editingTaskId = null;
+    if (el.taskEditStatusGroup) el.taskEditStatusGroup.classList.add('hidden');
+    if (el.taskModalInfoCallout) el.taskModalInfoCallout.classList.remove('hidden');
+    if (el.modalHeading) el.modalHeading.textContent = 'Create New Task';
+    if (el.btnSaveTask) el.btnSaveTask.textContent = 'Create Task';
   }
 
   async function handleCreateTaskSubmit(e) {
     e.preventDefault();
     if (state.isCreatingTask) return;
+
+    if (state.editingTaskId) {
+      handleEditTaskSubmit(e);
+      return;
+    }
 
     el.taskNameError.textContent = '';
     el.taskAssigneeError.textContent = '';
@@ -2798,6 +2901,182 @@
     });
   }
 
+  async function handleEditTaskSubmit(e) {
+    e.preventDefault();
+    if (state.isCreatingTask) return;
+
+    var taskId = state.editingTaskId;
+    var task = DataService.getTaskById(taskId);
+    if (!task) {
+      closeNewTaskModal();
+      return;
+    }
+
+    el.taskNameError.textContent = '';
+    el.taskAssigneeError.textContent = '';
+    el.taskDeadlineError.textContent = '';
+    if (el.taskDescError) el.taskDescError.textContent = '';
+
+    var newName = el.taskNameInput.value.trim();
+    var newAssignedTo = el.taskAssigneeInput.value.trim();
+    var newDeadline = el.taskDeadlineInput.value;
+    var newDesc = el.taskDescInput.value.trim();
+    var newStatus = el.taskStatusInput ? el.taskStatusInput.value : task.status;
+    var newIsPrivate = el.taskShareTeamInput ? !el.taskShareTeamInput.checked : task.isPrivate;
+
+    var hasError = false;
+    if (!newName) {
+      el.taskNameError.textContent = 'Task name is required';
+      el.taskNameInput.classList.add('is-invalid');
+      hasError = true;
+    }
+    if (!newAssignedTo) {
+      el.taskAssigneeError.textContent = 'Assigned To is required';
+      el.taskAssigneeInput.classList.add('is-invalid');
+      hasError = true;
+    }
+    if (!newDeadline) {
+      el.taskDeadlineError.textContent = 'Deadline is required';
+      el.taskDeadlineInput.classList.add('is-invalid');
+      hasError = true;
+    }
+    if (!newDesc) {
+      if (el.taskDescError) el.taskDescError.textContent = 'Description is required';
+      el.taskDescInput.classList.add('is-invalid');
+      hasError = true;
+    }
+    if (hasError) return;
+
+    var statusChanged = (newStatus && newStatus.toLowerCase() !== (task.status || '').toLowerCase());
+    var assigneeChanged = (newAssignedTo && newAssignedTo.toLowerCase() !== (task.assignedTo || '').toLowerCase());
+    var nameChanged = (newName !== task.taskName);
+    var descChanged = (newDesc !== task.description);
+    var deadlineChanged = (newDeadline !== task.deadline);
+    var privacyChanged = (newIsPrivate !== task.isPrivate);
+
+    if (!statusChanged && !assigneeChanged && !nameChanged && !descChanged && !deadlineChanged && !privacyChanged) {
+      closeNewTaskModal();
+      return;
+    }
+
+    state.isCreatingTask = true;
+    if (el.btnSaveTask) {
+      el.btnSaveTask.disabled = true;
+      el.btnSaveTask.textContent = 'Saving…';
+    }
+
+    var prevTaskData = {
+      taskName: task.taskName,
+      description: task.description,
+      assignedTo: task.assignedTo,
+      deadline: task.deadline,
+      status: task.status,
+      isPrivate: task.isPrivate,
+      lastUpdatedBy: task.lastUpdatedBy,
+      lastUpdatedAt: task.lastUpdatedAt
+    };
+    var prevHistory = [...DataService.history];
+
+    var nowIso = new Date().toISOString();
+    var currentUserName = state.currentUser ? state.currentUser.name : 'Team Member';
+
+    // Apply updates optimistically
+    task.taskName = newName;
+    task.description = newDesc;
+    task.assignedTo = newAssignedTo;
+    task.deadline = newDeadline;
+    task.status = newStatus;
+    task.isPrivate = newIsPrivate;
+    task.lastUpdatedBy = currentUserName;
+    task.lastUpdatedAt = nowIso;
+
+    // Selective Activity History tracking:
+    // - Name & Description edits: NEVER log
+    // - Privacy toggle: NEVER log
+    // - Status change: LOG
+    // - Assignee change: LOG
+    var optHistoryEntries = [];
+    if (statusChanged) {
+      var optStatusEntry = {
+        historyId: 'HIST-OPT-' + Date.now() + '-S',
+        taskId: task.taskId,
+        taskName: newName,
+        status: newStatus,
+        note: 'Status updated to ' + newStatus,
+        updatedBy: currentUserName,
+        timestamp: nowIso
+      };
+      optHistoryEntries.push(optStatusEntry);
+      DataService.history.unshift(optStatusEntry);
+    }
+    if (assigneeChanged) {
+      var optAssignEntry = {
+        historyId: 'HIST-OPT-' + (Date.now() + 1) + '-A',
+        taskId: task.taskId,
+        taskName: newName,
+        status: newStatus,
+        note: 'Assigned to ' + newAssignedTo + (prevTaskData.assignedTo ? (' (previously ' + prevTaskData.assignedTo + ')') : ''),
+        updatedBy: currentUserName,
+        timestamp: nowIso
+      };
+      optHistoryEntries.push(optAssignEntry);
+      DataService.history.unshift(optAssignEntry);
+    }
+    if (optHistoryEntries.length > 0) {
+      DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
+    }
+
+    closeNewTaskModal();
+    renderAll();
+    DataService.saveToStorage();
+    updateSyncStatus('saving');
+
+    setTimeout(function () {
+      state.isCreatingTask = false;
+      if (el.btnSaveTask) {
+        el.btnSaveTask.disabled = false;
+        el.btnSaveTask.textContent = 'Create Task';
+      }
+    }, 400);
+
+    executeUserActionWithRetry({
+      action: 'editTask',
+      taskName: newName,
+      payload: {
+        taskId: task.taskId,
+        taskName: newName,
+        description: newDesc,
+        assignedTo: newAssignedTo,
+        deadline: newDeadline,
+        status: newStatus,
+        isPrivate: newIsPrivate
+      },
+      rollbackFn: function () {
+        Object.assign(task, prevTaskData);
+        DataService.history = prevHistory;
+        renderAll();
+      },
+      onSuccess: function (res) {
+        if (res && res.task) {
+          var idx = DataService.tasks.findIndex(function (t) {
+            return String(t.taskId || '').toLowerCase() === String(task.taskId || '').toLowerCase();
+          });
+          if (idx !== -1) {
+            DataService.tasks[idx] = res.task;
+          }
+        }
+        if (res && Array.isArray(res.historyEntries) && res.historyEntries.length > 0) {
+          res.historyEntries.forEach(function (h) {
+            DataService.history.unshift(h);
+          });
+          DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
+        }
+        DataService.saveToStorage();
+        renderAll();
+      }
+    });
+  }
+
   // ==========================================================================
   // 11. CONTEXT MENU & SHORTCUTS
   // ==========================================================================
@@ -2805,6 +3084,16 @@
     state.contextMenuTaskId = taskId;
     var task = DataService.getTaskById(taskId);
     if (!task) return;
+
+    var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
+    var isCreator = task.createdBy && task.createdBy.trim().toLowerCase() === currentUserName;
+    if (el.ctxEditTask) {
+      if (isCreator && task.state !== 'Archived') {
+        el.ctxEditTask.classList.remove('hidden');
+      } else {
+        el.ctxEditTask.classList.add('hidden');
+      }
+    }
 
     if (task.state === 'Archived') {
       el.ctxMarkComplete.classList.add('hidden');
@@ -3124,6 +3413,11 @@
 
     // Modal controls
     el.btnOpenNewTask.addEventListener('click', openNewTaskModal);
+    if (el.btnEditTask) {
+      el.btnEditTask.addEventListener('click', function () {
+        if (state.selectedTaskId) openEditTaskModal(state.selectedTaskId);
+      });
+    }
     el.btnCloseModal.addEventListener('click', closeNewTaskModal);
     el.btnCancelModal.addEventListener('click', closeNewTaskModal);
     el.newTaskForm.addEventListener('submit', handleCreateTaskSubmit);
@@ -3177,6 +3471,16 @@
       if (state.contextMenuTaskId) selectTask(state.contextMenuTaskId);
       closeContextMenu();
     });
+
+    if (el.ctxEditTask) {
+      el.ctxEditTask.addEventListener('click', function () {
+        if (state.contextMenuTaskId) {
+          selectTask(state.contextMenuTaskId);
+          openEditTaskModal(state.contextMenuTaskId);
+        }
+        closeContextMenu();
+      });
+    }
 
     el.ctxChangeStatus.addEventListener('click', function () {
       if (state.contextMenuTaskId) {
