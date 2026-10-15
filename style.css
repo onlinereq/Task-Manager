@@ -2157,6 +2157,31 @@ kbd, .kbd-shortcut, .btn-kbd, .search-kbd {
   font-weight: var(--font-weight-semibold);
 }
 
+/* Personal Tasks Filter Bar */
+.personal-filter-bar {
+  display: flex;
+  align-items: center;
+  padding-top: 8px;
+}
+
+.personal-filter-bar.hidden {
+  display: none !important;
+}
+
+.personal-filter-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+}
+
+.personal-filter-label:hover {
+  color: var(--color-text-main);
+}
+
 /* Right-Click Context Menu */
 .context-menu {
   position: fixed;
