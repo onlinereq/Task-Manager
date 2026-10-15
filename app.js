@@ -306,6 +306,170 @@
   }
 
   // ==========================================================================
+  // 2b. PENDING ACTION & RETRY QUEUE (Idempotent & Resilient)
+  // ==========================================================================
+  var PENDING_ACTIONS_STORAGE_KEY = 'team_tasks_pending_actions';
+
+  function getPendingActions() {
+    try {
+      var raw = localStorage.getItem(PENDING_ACTIONS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function savePendingActions(actions) {
+    try {
+      if (!actions || actions.length === 0) {
+        localStorage.removeItem(PENDING_ACTIONS_STORAGE_KEY);
+      } else {
+        localStorage.setItem(PENDING_ACTIONS_STORAGE_KEY, JSON.stringify(actions));
+      }
+    } catch (e) {}
+  }
+
+  function addPendingAction(actionObj) {
+    var list = getPendingActions();
+    list.push(actionObj);
+    savePendingActions(list);
+  }
+
+  function removePendingAction(requestId) {
+    var list = getPendingActions().filter(function (a) {
+      return a.requestId !== requestId;
+    });
+    savePendingActions(list);
+  }
+
+  function updatePendingActionRetry(requestId, retries) {
+    var list = getPendingActions();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].requestId === requestId) {
+        list[i].retries = retries;
+        break;
+      }
+    }
+    savePendingActions(list);
+  }
+
+  /**
+   * Executes a user mutation action with:
+   * 1. Persistence in localStorage (tagged with unique requestId)
+   * 2. Automatic retry (up to 3 times with progressive delay) on server_busy / timeout / network_error
+   * 3. No rollback during transient retries
+   * 4. Immediate rollback & rejection on genuine security failure (unauthorized, locked, forbidden)
+   * 5. Clear error message on exhaustion
+   */
+  async function executeUserActionWithRetry(options) {
+    var actionName = options.action;
+    var payload = options.payload || {};
+    var taskName = options.taskName || 'Task';
+    var rollbackFn = options.rollbackFn;
+    var onSuccessFn = options.onSuccess;
+    var maxRetries = (typeof options.maxRetries === 'number') ? options.maxRetries : 3;
+
+    // Generate unique client requestId for idempotency
+    var requestId = payload.requestId || ('REQ-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase());
+    payload.requestId = requestId;
+
+    var pendingItem = {
+      requestId: requestId,
+      action: actionName,
+      payload: payload,
+      taskName: taskName,
+      retries: 0,
+      createdAt: Date.now()
+    };
+    addPendingAction(pendingItem);
+
+    async function attempt(retryCount) {
+      updateSyncStatus('saving');
+      var res = await apiCall(actionName, payload);
+
+      // 1. Strict Security Rejection (Requirement 8):
+      // Genuine unauthorized or locked MUST block immediately, roll back UI, prompt re-login, no retries!
+      if (res && (res.error === 'unauthorized' || res.error === 'locked')) {
+        removePendingAction(requestId);
+        handleAuthFailureResponse(res, rollbackFn);
+        return;
+      }
+
+      // 2. Permission failure (e.g. non-owner trying to edit/delete another person's task)
+      if (res && res.error === 'forbidden') {
+        removePendingAction(requestId);
+        if (typeof rollbackFn === 'function') {
+          try { rollbackFn(); } catch (e) {}
+        }
+        updateSyncStatus('error');
+        showAlertModal(res.message || 'You do not have permission to perform this action.', 'Authorization Denied');
+        return;
+      }
+
+      // 3. Success!
+      if (res && res.ok && res.success) {
+        removePendingAction(requestId);
+        updateSyncStatus('synced');
+        if (typeof onSuccessFn === 'function') {
+          try { onSuccessFn(res); } catch (e) {}
+        }
+        return;
+      }
+
+      // 4. Transient failure (server_busy, network error, timeout, or temporary server glitch)
+      var isTransient = (!res || res.error === 'server_busy' || res.error === 'busy' || res.error === 'network_error' || res.ok === false);
+      if (isTransient && retryCount < maxRetries) {
+        var nextRetry = retryCount + 1;
+        updatePendingActionRetry(requestId, nextRetry);
+        updateSyncStatus('syncing');
+        var delay = 800 * nextRetry;
+        setTimeout(function () {
+          attempt(nextRetry);
+        }, delay);
+        return;
+      }
+
+      // 5. Retries exhausted
+      removePendingAction(requestId);
+      if (typeof rollbackFn === 'function') {
+        try { rollbackFn(); } catch (e) {}
+      }
+      updateSyncStatus('error');
+      var reason = (res && res.message) ? res.message : 'server connection issue';
+      showAlertModal("Could not save '" + taskName + "' (" + reason + "). Please check your connection or try again.", "Action Failed");
+    }
+
+    attempt(0);
+  }
+
+  async function flushPendingActions() {
+    if (!state.currentUser) return;
+    var pending = getPendingActions();
+    if (!pending || pending.length === 0) return;
+
+    for (var i = 0; i < pending.length; i++) {
+      var item = pending[i];
+      try {
+        var res = await apiCall(item.action, item.payload);
+        if (res && (res.error === 'unauthorized' || res.error === 'locked')) {
+          removePendingAction(item.requestId);
+          handleAuthFailureResponse(res);
+          return;
+        }
+        if (res && res.ok && res.success) {
+          removePendingAction(item.requestId);
+        } else if (res && res.error === 'forbidden') {
+          removePendingAction(item.requestId);
+        }
+      } catch (err) {}
+    }
+    var remaining = getPendingActions();
+    if (remaining.length === 0) {
+      updateSyncStatus('synced');
+    }
+  }
+
+  // ==========================================================================
   // 3. UTILITIES & HELPERS
   // ==========================================================================
   var STATUS_CONFIG = {
@@ -454,6 +618,7 @@
     selectedTaskId: null,
     searchQuery: '',
     syncTimer: null,
+    consecutiveSyncAuthFailures: 0,
     startupInProgress: false,
     undoTimeout: null,
     lastUndoAction: null,    // { taskId, prevState, description }
@@ -804,6 +969,7 @@
       // Render Dashboard
       renderAll();
       startPeriodicSync();
+      flushPendingActions();
 
     } catch (failureErr) {
       state.startupInProgress = false;
@@ -842,8 +1008,34 @@
     updateSyncStatus('syncing');
 
     var res = await apiCall('sync', { lastSync: DataService.lastSync });
-    if (handleAuthFailureResponse(res)) return;
 
+    // 1. Account locked: prompt re-login / locked modal immediately
+    if (res && res.error === 'locked') {
+      state.consecutiveSyncAuthFailures = 0;
+      handleAuthFailureResponse(res);
+      return;
+    }
+
+    // 2. Transient errors (server_busy, network_error, timeout): NEVER log out
+    if (!res || res.error === 'server_busy' || res.error === 'network_error' || res.error === 'busy') {
+      updateSyncStatus('error');
+      // Do not count towards unauthorized, retry silently on next cycle
+      return;
+    }
+
+    // 3. Genuine unauthorized: require 3 consecutive occurrences before kicking out
+    if (res.error === 'unauthorized' || (res.ok === false && res.error === 'unauthorized')) {
+      state.consecutiveSyncAuthFailures = (state.consecutiveSyncAuthFailures || 0) + 1;
+      updateSyncStatus('error');
+      if (state.consecutiveSyncAuthFailures >= 3) {
+        state.consecutiveSyncAuthFailures = 0;
+        handleAuthFailureResponse(res);
+      }
+      return;
+    }
+
+    // 4. Success
+    state.consecutiveSyncAuthFailures = 0;
     if (res && res.success && res.data) {
       DataService.loadSyncData(res.data);
       updateSyncStatus('synced');
@@ -1873,17 +2065,19 @@
       selectTask(taskId);
     };
 
-    // Sync in background with shared historyId and timestamp
-    apiCall('updateTask', {
-      taskId: taskId,
-      status: newStatus,
-      note: note,
-      historyId: historyId,
-      timestamp: nowIso
-    }).then(function (res) {
-      if (handleAuthFailureResponse(res, rollbackStatus)) return;
-
-      if (res && res.ok && res.success) {
+    // Sync in background with retry and idempotency
+    executeUserActionWithRetry({
+      action: 'updateTask',
+      taskName: task.taskName,
+      payload: {
+        taskId: taskId,
+        status: newStatus,
+        note: note,
+        historyId: historyId,
+        timestamp: nowIso
+      },
+      rollbackFn: rollbackStatus,
+      onSuccess: function (res) {
         if (res.task) {
           var updated = res.task;
           var idx = DataService.tasks.findIndex(function (t) {
@@ -1905,15 +2099,7 @@
         DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
         DataService.saveToStorage();
         renderTaskDetails(false);
-        updateSyncStatus('synced');
-      } else {
-        rollbackStatus();
-        updateSyncStatus('error');
-        showAlertModal((res && res.message) || 'Failed to update task status.', 'Update Error');
       }
-    }).catch(function () {
-      rollbackStatus();
-      updateSyncStatus('error');
     });
   }
 
@@ -1997,24 +2183,19 @@
       selectTask(taskId);
     };
 
-    // Background sync without blocking
-    apiCall('setState', {
-      taskId: taskId,
-      state: targetState,
-      note: 'State set to ' + targetState,
-      historyId: historyId,
-      timestamp: nowIso
-    }).then(function (res) {
-      if (handleAuthFailureResponse(res, rollbackState)) return;
-
-      if (res && res.error === 'forbidden') {
-        rollbackState();
-        updateSyncStatus('error');
-        showAlertModal(res.message || 'Only the task owner can edit or change the state of this task.', 'Authorization Denied');
-        return;
-      }
-
-      if (res && res.ok && res.success) {
+    // Background sync with retry and idempotency
+    executeUserActionWithRetry({
+      action: 'setState',
+      taskName: task.taskName,
+      payload: {
+        taskId: taskId,
+        state: targetState,
+        note: 'State set to ' + targetState,
+        historyId: historyId,
+        timestamp: nowIso
+      },
+      rollbackFn: rollbackState,
+      onSuccess: function (res) {
         if (res.task && res.task.lastUpdatedAt) {
           DataService.lastSync = res.task.lastUpdatedAt;
         }
@@ -2028,15 +2209,7 @@
         }
         DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
         DataService.saveToStorage();
-        updateSyncStatus('synced');
-      } else {
-        rollbackState();
-        updateSyncStatus('error');
-        showAlertModal((res && res.message) || 'Failed to update state.', 'State Error');
       }
-    }).catch(function () {
-      rollbackState();
-      updateSyncStatus('error');
     });
   }
 
@@ -2086,26 +2259,15 @@
       if (prevSelectedId) selectTask(prevSelectedId);
     };
 
-    apiCall('deleteTask', { taskId: taskId }).then(function (res) {
-      if (handleAuthFailureResponse(res, rollbackDelete)) return;
-
-      if (res && res.error === 'forbidden') {
-        rollbackDelete();
-        updateSyncStatus('error');
-        showAlertModal(res.message || 'Only the task owner can delete this task.', 'Authorization Denied');
-        return;
+    // Delete in background with retry and idempotency
+    executeUserActionWithRetry({
+      action: 'deleteTask',
+      taskName: taskId,
+      payload: { taskId: taskId },
+      rollbackFn: rollbackDelete,
+      onSuccess: function () {
+        DataService.saveToStorage();
       }
-
-      if (res && res.ok && res.success) {
-        updateSyncStatus('synced');
-      } else {
-        rollbackDelete();
-        updateSyncStatus('error');
-        showAlertModal((res && res.message) || 'Failed to delete task on server.', 'Deletion Error');
-      }
-    }).catch(function () {
-      rollbackDelete();
-      updateSyncStatus('error');
     });
   }
 
@@ -2165,36 +2327,33 @@
     renderPeoplePanel();
     renderTasksList();
 
-    apiCall('setPrivacy', {
-      taskId: task.taskId,
-      isPrivate: newIsPrivate
-    }).then(function (res) {
-      if (handleAuthFailureResponse(res, function () {
+    executeUserActionWithRetry({
+      action: 'setPrivacy',
+      taskName: task.taskName,
+      payload: {
+        taskId: task.taskId,
+        isPrivate: newIsPrivate
+      },
+      rollbackFn: function () {
         task.isPrivate = prevIsPrivate;
         renderAll();
-      })) return;
-
-      if (res && res.ok && res.task) {
-        var idx = DataService.tasks.findIndex(function (t) {
-          return String(t.taskId || '').trim().toLowerCase() === String(task.taskId || '').trim().toLowerCase();
-        });
-        if (idx !== -1) {
-          DataService.tasks[idx].isPrivate = (res.task.isPrivate === true);
+      },
+      onSuccess: function (res) {
+        if (res && res.task) {
+          var idx = DataService.tasks.findIndex(function (t) {
+            return String(t.taskId || '').trim().toLowerCase() === String(task.taskId || '').trim().toLowerCase();
+          });
+          if (idx !== -1) {
+            DataService.tasks[idx].isPrivate = (res.task.isPrivate === true);
+          }
         }
-        if (res.historyEntry) {
+        if (res && res.historyEntry) {
           DataService.history.unshift(res.historyEntry);
           DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
         }
         DataService.saveToStorage();
         renderAll();
-      } else {
-        task.isPrivate = prevIsPrivate;
-        renderAll();
-        showAlertModal((res && res.message) || 'Failed to update privacy on server.', 'Privacy Update Error');
       }
-    }).catch(function () {
-      task.isPrivate = prevIsPrivate;
-      renderAll();
     });
   }
 
@@ -2434,55 +2593,51 @@
       renderAll();
     };
 
-    // 2. Perform backend request in the background
-    apiCall('createTask', {
-      taskId: tempId,
-      historyId: tempHistoryId,
+    // 2. Perform backend request in the background with retry and idempotency
+    executeUserActionWithRetry({
+      action: 'createTask',
       taskName: name,
-      assignedTo: assignedTo,
-      deadline: deadline,
-      description: description,
-      isPrivate: isPrivate
-    }).then(function (res) {
-      if (handleAuthFailureResponse(res, rollbackCreate)) return;
-
-      if (res && res.ok && res.success && res.task) {
-        var realTask = res.task;
-        var realHist = res.historyEntry;
-        var idx = DataService.tasks.findIndex(function (t) {
-          return String(t.taskId || '').trim().toLowerCase() === String(tempId).trim().toLowerCase();
-        });
-        if (idx !== -1) {
-          DataService.tasks[idx] = realTask;
-        }
-        DataService.history.forEach(function (h) {
-          if (String(h.taskId || '').trim().toLowerCase() === String(tempId).trim().toLowerCase()) {
-            h.taskId = realTask.taskId;
-            if (realHist && h.historyId === tempHistoryId) {
-              h.historyId = realHist.historyId;
-              h.timestamp = realHist.timestamp;
-            }
+      payload: {
+        taskId: tempId,
+        historyId: tempHistoryId,
+        taskName: name,
+        assignedTo: assignedTo,
+        deadline: deadline,
+        description: description,
+        isPrivate: isPrivate
+      },
+      rollbackFn: rollbackCreate,
+      onSuccess: function (res) {
+        if (res && res.task) {
+          var realTask = res.task;
+          var realHist = res.historyEntry;
+          var idx = DataService.tasks.findIndex(function (t) {
+            return String(t.taskId || '').trim().toLowerCase() === String(tempId).trim().toLowerCase();
+          });
+          if (idx !== -1) {
+            DataService.tasks[idx] = realTask;
           }
-        });
-        DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
-        if (state.selectedTaskId === tempId) {
-          state.selectedTaskId = realTask.taskId;
+          DataService.history.forEach(function (h) {
+            if (String(h.taskId || '').trim().toLowerCase() === String(tempId).trim().toLowerCase()) {
+              h.taskId = realTask.taskId;
+              if (realHist && h.historyId === tempHistoryId) {
+                h.historyId = realHist.historyId;
+                h.timestamp = realHist.timestamp;
+              }
+            }
+          });
+          DataService.history = DataService.cleanAndDeduplicateHistory(DataService.history);
+          if (state.selectedTaskId === tempId) {
+            state.selectedTaskId = realTask.taskId;
+          }
+          if (realTask.lastUpdatedAt) {
+            DataService.lastSync = realTask.lastUpdatedAt;
+          }
+          DataService.saveToStorage();
+          renderAll();
+          selectTask(realTask.taskId);
         }
-        if (realTask.lastUpdatedAt) {
-          DataService.lastSync = realTask.lastUpdatedAt;
-        }
-        DataService.saveToStorage();
-        renderAll();
-        selectTask(realTask.taskId);
-        updateSyncStatus('synced');
-      } else {
-        rollbackCreate();
-        updateSyncStatus('error');
-        showAlertModal((res && res.message) || 'Failed to create task on server.', 'Creation Error');
       }
-    }).catch(function () {
-      rollbackCreate();
-      updateSyncStatus('error');
     });
   }
 
