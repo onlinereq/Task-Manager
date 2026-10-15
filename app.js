@@ -721,7 +721,8 @@
     isUpdatingStatus: false,
     isDragging: false,
     pendingStateTasks: new Set(),
-    lastRenderedTaskId: null
+    lastRenderedTaskId: null,
+    modalAssigneePrevious: null
   };
 
   var el = {
@@ -2568,10 +2569,17 @@
     el.taskDeadlineInput.value = `${yyyy}-${mm}-${dd}`;
     updateDeadlineHint(el.taskDeadlineInput.value);
 
+    // Initial assignee tracking and UX default for "Share with team"
+    var creatorName = currentUserName.trim().toLowerCase();
+    var initialAssignee = (el.taskAssigneeInput.value || '').trim();
+    var initialAssigneeKey = initialAssignee.toLowerCase();
+    state.modalAssigneePrevious = initialAssignee;
+
+    var shouldShare = Boolean(initialAssigneeKey && initialAssigneeKey !== creatorName);
     if (el.taskShareTeamInput) {
-      el.taskShareTeamInput.checked = false; // Unchecked by default (Private)
+      el.taskShareTeamInput.checked = shouldShare;
     }
-    updateNewTaskModalPrivacy(false);
+    updateNewTaskModalPrivacy(shouldShare);
 
     el.newTaskModal.classList.remove('hidden');
     el.taskNameInput.focus();
@@ -2602,6 +2610,7 @@
 
   function closeNewTaskModal() {
     el.newTaskModal.classList.add('hidden');
+    state.modalAssigneePrevious = null;
   }
 
   async function handleCreateTaskSubmit(e) {
@@ -3099,6 +3108,34 @@
     el.btnCloseModal.addEventListener('click', closeNewTaskModal);
     el.btnCancelModal.addEventListener('click', closeNewTaskModal);
     el.newTaskForm.addEventListener('submit', handleCreateTaskSubmit);
+
+    function handleTaskAssigneeChange() {
+      if (!el.taskAssigneeInput || !el.taskShareTeamInput) return;
+      var selectedAssignee = (el.taskAssigneeInput.value || '').trim();
+      var selectedAssigneeKey = selectedAssignee.toLowerCase();
+      var prevAssigneeKey = (state.modalAssigneePrevious || '').trim().toLowerCase();
+
+      // Only act if the assignee actually changed
+      if (selectedAssigneeKey === prevAssigneeKey) return;
+      state.modalAssigneePrevious = selectedAssignee;
+
+      var creatorName = (state.currentUser && state.currentUser.name ? state.currentUser.name : '').trim().toLowerCase();
+
+      if (selectedAssigneeKey && selectedAssigneeKey !== creatorName) {
+        // Assigned To = someone else -> auto-check "Share with team" (Public)
+        el.taskShareTeamInput.checked = true;
+        updateNewTaskModalPrivacy(true);
+      } else if (selectedAssigneeKey && selectedAssigneeKey === creatorName) {
+        // Assigned To = creator themselves -> auto-uncheck "Share with team" (Private)
+        el.taskShareTeamInput.checked = false;
+        updateNewTaskModalPrivacy(false);
+      }
+    }
+
+    if (el.taskAssigneeInput) {
+      el.taskAssigneeInput.addEventListener('change', handleTaskAssigneeChange);
+      el.taskAssigneeInput.addEventListener('input', handleTaskAssigneeChange);
+    }
 
     if (el.taskShareTeamInput) {
       el.taskShareTeamInput.addEventListener('change', function () {
