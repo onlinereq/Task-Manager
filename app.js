@@ -11,8 +11,8 @@
   // 1. DATA MODULE & CONFIGURATION
   // ==========================================================================
   var API_URL = (typeof CONFIG_API_URL !== 'undefined' && CONFIG_API_URL && CONFIG_API_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE')
-    ? CONFIG_API_URL
-    : 'https://script.google.com/macros/s/AKfycbwvowWE3oRGAsp7KuAWYi1uUyuBxJavYml9osFxxw3OTixrGTKnhWBLY2w3QIcgTZX1Ww/exec';
+    ? String(CONFIG_API_URL).trim()
+    : '';
 
   function parseDateToEpoch(isoOrDateStr) {
     if (!isoOrDateStr) return 0;
@@ -244,6 +244,16 @@
   // 2. API CLIENT (text/plain JSON to avoid CORS preflight)
   // ==========================================================================
   async function apiCall(action, extraPayload) {
+    if (!API_URL) {
+      console.error('Missing API configuration: CONFIG_API_URL is not set or invalid.');
+      return {
+        ok: false,
+        success: false,
+        error: 'missing_config',
+        message: 'Missing API configuration. Please configure CONFIG_API_URL in config.js.'
+      };
+    }
+
     extraPayload = extraPayload || {};
     var currentUser = state.currentUser;
     if (!currentUser) {
@@ -1184,8 +1194,15 @@
   // 7. AUTHENTICATION & LOGIN FLOW (Password Manager Friendly)
   // ==========================================================================
   function initAuth() {
-    // Ping backend immediately on page load to wake up script
-    apiCall('ping');
+    if (!API_URL) {
+      console.error('Missing API configuration: CONFIG_API_URL is missing or unconfigured.');
+      if (el.loginPinError) {
+        el.loginPinError.textContent = 'Missing API configuration. Please set CONFIG_API_URL in config.js.';
+      }
+    } else {
+      // Ping backend immediately on page load to wake up script
+      apiCall('ping');
+    }
 
     // Populate app version from config.js
     if (el.appVersionIndicator) {
@@ -1287,6 +1304,8 @@
       el.loginPin.value = '';
       if (res && res.error === 'locked') {
         el.loginPinError.textContent = 'Account temporarily locked (5 failed attempts). Try again in 15 minutes.';
+      } else if (res && res.error === 'missing_config') {
+        el.loginPinError.textContent = res.message || 'Missing API configuration. Please configure CONFIG_API_URL in config.js.';
       } else {
         el.loginPinError.textContent = 'Invalid name or PIN. Please verify credentials.';
       }
