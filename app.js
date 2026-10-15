@@ -1425,16 +1425,22 @@
     el.membersNavList.innerHTML = '';
 
     if (DataService.users.length === 0) {
+      el.membersEmptyState.textContent = 'No team members loaded';
       el.membersEmptyState.classList.remove('hidden');
       return;
     }
 
-    el.membersEmptyState.classList.add('hidden');
+    var renderedMembersCount = 0;
 
     DataService.users.forEach(function (user) {
       var userCount = activeTasks.filter(function (t) {
         return (t.assignedTo || '').toLowerCase() === user.name.toLowerCase();
       }).length;
+
+      if (userCount === 0) {
+        return;
+      }
+      renderedMembersCount++;
 
       var isActive = state.filterType === 'PERSON' && state.selectedFilter.toLowerCase() === user.name.toLowerCase();
       var nameLang = getLangAttr(user.name);
@@ -1455,6 +1461,13 @@
 
       el.membersNavList.appendChild(itemBtn);
     });
+
+    if (renderedMembersCount === 0) {
+      el.membersEmptyState.textContent = 'No team members with active tasks';
+      el.membersEmptyState.classList.remove('hidden');
+    } else {
+      el.membersEmptyState.classList.add('hidden');
+    }
   }
 
   function getFilteredTasks() {
