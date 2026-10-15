@@ -31,6 +31,53 @@
     return isNaN(t) ? 0 : t;
   }
 
+  function generateTaskCodeFromDate(dateVal, idHint) {
+    var d = dateVal ? new Date(dateVal) : new Date();
+    if (isNaN(d.getTime())) d = new Date();
+    var dd = String(d.getDate()).padStart(2, '0');
+    var mm = String(d.getMonth() + 1).padStart(2, '0');
+    var yy = String(d.getFullYear()).slice(-2);
+    var base = 'TC' + dd + mm + yy;
+
+    var hash = 1;
+    if (idHint) {
+      var str = String(idHint);
+      var sum = 0;
+      for (var i = 0; i < str.length; i++) {
+        sum = (sum * 31 + str.charCodeAt(i)) % 99;
+      }
+      hash = Math.abs(sum) + 1;
+    }
+    return base + '-' + String(hash).padStart(2, '0');
+  }
+
+  function generateNewTaskCode(existingTasks, dateVal) {
+    var d = dateVal ? new Date(dateVal) : new Date();
+    if (isNaN(d.getTime())) d = new Date();
+    var dd = String(d.getDate()).padStart(2, '0');
+    var mm = String(d.getMonth() + 1).padStart(2, '0');
+    var yy = String(d.getFullYear()).slice(-2);
+    var base = 'TC' + dd + mm + yy;
+
+    var used = {};
+    (existingTasks || []).forEach(function (t) {
+      var c = String(t.taskCode || '').toUpperCase();
+      if (c.indexOf(base) === 0) {
+        var parts = c.split('-');
+        if (parts.length > 1) {
+          var n = parseInt(parts[1], 10);
+          if (!isNaN(n)) used[n] = true;
+        }
+      }
+    });
+
+    var seq = 1;
+    while (used[seq]) {
+      seq++;
+    }
+    return base + '-' + String(seq).padStart(2, '0');
+  }
+
   var DataService = {
     users: [],       // Array of { name, team, status }
     tasks: [],       // Array of { taskId, taskName, description, assignedTo, deadline, status, state, createdBy, createdAt, lastUpdatedBy, lastUpdatedAt }
@@ -809,6 +856,7 @@
     // Right Details Panel
     detailsEmptyState: document.getElementById('details-empty-state'),
     detailsContent: document.getElementById('details-content'),
+    detailTaskCode: document.getElementById('detail-task-code'),
     detailTaskName: document.getElementById('detail-task-name'),
     detailStatusBadge: document.getElementById('detail-status-badge'),
     detailPrivacyBadge: document.getElementById('detail-privacy-badge'),
@@ -1437,6 +1485,8 @@
     var q = state.searchQuery.trim().toLowerCase();
     if (q) {
       tasks = tasks.filter(function (t) {
+        var code = (t.taskCode || generateTaskCodeFromDate(t.createdAt, t.taskId)).toLowerCase();
+        var codeMatch = code.includes(q);
         var nameMatch = (t.taskName || '').toLowerCase().includes(q);
         var descMatch = (t.description || '').toLowerCase().includes(q);
         var assigneeMatch = (t.assignedTo || '').toLowerCase().includes(q);
@@ -1451,7 +1501,7 @@
                  (h.updatedBy || '').toLowerCase().includes(q);
         });
 
-        return nameMatch || descMatch || assigneeMatch || creatorMatch || statusMatch || deadlineMatch || historyMatch;
+        return codeMatch || nameMatch || descMatch || assigneeMatch || creatorMatch || statusMatch || deadlineMatch || historyMatch;
       });
     }
 
@@ -1461,6 +1511,8 @@
   function getSearchMatchTag(task, q) {
     if (!q) return '';
     q = q.toLowerCase();
+    var taskCode = (task.taskCode || generateTaskCodeFromDate(task.createdAt, task.taskId)).toLowerCase();
+    if (taskCode.includes(q)) return 'Code';
     if ((task.taskName || '').toLowerCase().includes(q)) return 'Title';
     if ((task.assignedTo || '').toLowerCase().includes(q)) return 'Assignee';
     if ((task.description || '').toLowerCase().includes(q)) return 'Description';
@@ -1641,6 +1693,12 @@
 
     el.detailsEmptyState.classList.add('hidden');
     el.detailsContent.classList.remove('hidden');
+
+    if (el.detailTaskCode) {
+      var code = task.taskCode || generateTaskCodeFromDate(task.createdAt, task.taskId);
+      el.detailTaskCode.textContent = code;
+      el.detailTaskCode.setAttribute('title', 'Task Code: ' + code + ' (Click to copy)');
+    }
 
     var daysText = getDaysAgo(task.createdAt);
     var daysHtml = daysText
@@ -2785,12 +2843,14 @@
     // 1. Instant optimistic creation
     var nowIso = new Date().toISOString();
     var tempId = 'TSK-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    var taskCode = generateNewTaskCode(DataService.tasks, new Date());
     var tempHistoryId = 'HIST-' + Date.now().toString(36).toUpperCase() + '-INIT';
     var currentUserName = state.currentUser ? state.currentUser.name : assignedTo;
     var isPrivate = el.taskShareTeamInput ? !el.taskShareTeamInput.checked : true;
 
     var optimisticTask = {
       taskId: tempId,
+      taskCode: taskCode,
       taskName: name,
       description: description,
       assignedTo: assignedTo,
@@ -2850,6 +2910,7 @@
       taskName: name,
       payload: {
         taskId: tempId,
+        taskCode: taskCode,
         historyId: tempHistoryId,
         taskName: name,
         assignedTo: assignedTo,
@@ -3457,6 +3518,23 @@
       if (state.contextMenuTaskId) selectTask(state.contextMenuTaskId);
       closeContextMenu();
     });
+
+    if (el.detailTaskCode) {
+      el.detailTaskCode.addEventListener('click', function () {
+        var c = this.textContent.trim();
+        if (c && c !== '-' && c !== 'Copied!') {
+          try {
+            navigator.clipboard.writeText(c);
+            var self = this;
+            var orig = self.textContent;
+            self.textContent = 'Copied!';
+            setTimeout(function () {
+              self.textContent = orig;
+            }, 1000);
+          } catch (err) {}
+        }
+      });
+    }
 
     if (el.ctxEditTask) {
       el.ctxEditTask.addEventListener('click', function () {
