@@ -1413,8 +1413,8 @@
 
     el.countAll.textContent = activeTasks.length;
     if (el.countPersonal) el.countPersonal.textContent = personalTasks.length;
-    el.countCompleted.textContent = completedTasks.length;
-    el.countArchived.textContent = archivedTasks.length;
+    if (el.countCompleted) el.countCompleted.textContent = completedTasks.length;
+    if (el.countArchived) el.countArchived.textContent = archivedTasks.length;
 
     // Active state highlighting on left panel items
     el.filterAll.classList.toggle('active', state.filterType === 'ALL');
