@@ -767,6 +767,7 @@
     filterType: 'ALL',       // 'ALL' | 'PERSON' | 'COMPLETED' | 'ARCHIVED'
     selectedTaskId: null,
     searchQuery: '',
+    onlyMeFilter: false,
     syncTimer: null,              // 60-second pending queue check
     sessionCheckTimer: null,      // 10-minute session validity check
     consecutiveSyncAuthFailures: 0,
@@ -847,6 +848,8 @@
     taskSearchInput: document.getElementById('task-search-input'),
     btnClearSearch: document.getElementById('btn-clear-search'),
     searchSummaryBar: document.getElementById('search-summary-bar'),
+    personalFilterBar: document.getElementById('personal-filter-bar'),
+    filterOnlyMeCheckbox: document.getElementById('filter-only-me-checkbox'),
     tasksScrollContainer: document.getElementById('tasks-scroll-container'),
     taskItemsList: document.getElementById('task-items-list'),
     tasksEmptyState: document.getElementById('tasks-empty-state'),
@@ -1373,6 +1376,8 @@
     state.currentUser = null;
     state.selectedTaskId = null;
     state.lastRenderedTaskId = null;
+    state.onlyMeFilter = false;
+    if (el.filterOnlyMeCheckbox) el.filterOnlyMeCheckbox.checked = false;
     DataService.tasks = [];
     DataService.history = [];
     DataService.statuses = ['Register', 'In Progress', 'Review', 'Done'];
@@ -1481,8 +1486,13 @@
     } else if (state.filterType === 'PERSONAL') {
       var currentUserName = (state.currentUser ? state.currentUser.name : '').trim().toLowerCase();
       tasks = tasks.filter(function (t) {
-        return (t.state || 'Active') === 'Active' &&
+        var isMine = (t.state || 'Active') === 'Active' &&
                (t.createdBy || '').trim().toLowerCase() === currentUserName;
+        if (!isMine) return false;
+        if (state.onlyMeFilter) {
+          return t.isPrivate === true;
+        }
+        return true;
       });
     } else if (state.filterType === 'PERSON') {
       tasks = tasks.filter(function (t) {
@@ -1558,6 +1568,18 @@
 
     el.viewTaskCount.textContent = filteredTasks.length + (filteredTasks.length === 1 ? ' task' : ' tasks');
 
+    // Personal Tasks Only Me filter bar
+    if (el.personalFilterBar) {
+      if (state.filterType === 'PERSONAL') {
+        el.personalFilterBar.classList.remove('hidden');
+        if (el.filterOnlyMeCheckbox) {
+          el.filterOnlyMeCheckbox.checked = !!state.onlyMeFilter;
+        }
+      } else {
+        el.personalFilterBar.classList.add('hidden');
+      }
+    }
+
     // Search summary bar
     if (state.searchQuery.trim().length > 0) {
       el.searchSummaryBar.classList.remove('hidden');
@@ -1593,6 +1615,14 @@
       } else if (state.filterType === 'ARCHIVED') {
         el.tasksEmptyTitle.textContent = 'No deleted tasks';
         el.tasksEmptyDesc.textContent = 'Tasks moved to Deleted will appear here.';
+      } else if (state.filterType === 'PERSONAL') {
+        if (state.onlyMeFilter) {
+          el.tasksEmptyTitle.textContent = 'No Only Me tasks';
+          el.tasksEmptyDesc.textContent = 'You have no private tasks visible only to you.';
+        } else {
+          el.tasksEmptyTitle.textContent = 'No personal tasks yet';
+          el.tasksEmptyDesc.textContent = 'Tasks you create will appear here.';
+        }
       } else if (state.filterType === 'PERSON') {
         el.tasksEmptyTitle.textContent = 'No tasks for this member';
         el.tasksEmptyDesc.textContent = 'There are no active tasks assigned to ' + sanitize(state.selectedFilter) + '.';
@@ -3370,6 +3400,14 @@
       renderTasksList();
       el.taskSearchInput.focus();
     });
+
+    // Personal Tasks "Show Only Me Tasks" filter
+    if (el.filterOnlyMeCheckbox) {
+      el.filterOnlyMeCheckbox.addEventListener('change', function (e) {
+        state.onlyMeFilter = e.target.checked;
+        renderTasksList();
+      });
+    }
 
     // Status update: button only, prevent Enter key submission
     el.statusUpdateForm.addEventListener('submit', function (e) {
