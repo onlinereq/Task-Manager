@@ -781,7 +781,8 @@
     pendingStateTasks: new Set(),
     lastRenderedTaskId: null,
     modalAssigneePrevious: null,
-    editingTaskId: null
+    editingTaskId: null,
+    originalPaste: null
   };
 
   var el = {
@@ -861,6 +862,9 @@
     detailsContent: document.getElementById('details-content'),
     detailTaskCode: document.getElementById('detail-task-code'),
     detailTaskName: document.getElementById('detail-task-name'),
+    btnTaskInfo: document.getElementById('btn-task-info'),
+    taskInfoPopover: document.getElementById('task-info-popover'),
+    btnCloseTaskInfo: document.getElementById('btn-close-task-info'),
     detailStatusBadge: document.getElementById('detail-status-badge'),
     detailPrivacyBadge: document.getElementById('detail-privacy-badge'),
     detailPrivacyToggleWrapper: document.getElementById('detail-privacy-toggle-wrapper'),
@@ -897,6 +901,12 @@
     taskEditStatusGroup: document.getElementById('task-edit-status-group'),
     taskStatusInput: document.getElementById('task-status-input'),
     taskDescInput: document.getElementById('task-desc-input'),
+    btnToggleOriginalPaste: document.getElementById('btn-toggle-original-paste'),
+    smartPasteToast: document.getElementById('smart-paste-toast'),
+    smartPasteToastMsg: document.getElementById('smart-paste-toast-msg'),
+    originalPasteBox: document.getElementById('original-paste-box'),
+    btnCloseOriginalPaste: document.getElementById('btn-close-original-paste'),
+    originalPasteContent: document.getElementById('original-paste-content'),
     taskShareTeamInput: document.getElementById('task-share-team-input'),
     taskModalInfoCallout: document.getElementById('task-modal-info-callout'),
     taskNameError: document.getElementById('task-name-error'),
@@ -1717,8 +1727,77 @@
     }
   }
 
+  function openTaskInfoPopover() {
+    if (!el.taskInfoPopover || !el.btnTaskInfo) return;
+    el.taskInfoPopover.classList.remove('hidden');
+    el.btnTaskInfo.classList.add('is-active');
+    el.btnTaskInfo.setAttribute('aria-expanded', 'true');
+    positionTaskInfoPopover();
+  }
+
+  function closeTaskInfoPopover() {
+    if (!el.taskInfoPopover || !el.btnTaskInfo) return;
+    el.taskInfoPopover.classList.add('hidden');
+    el.btnTaskInfo.classList.remove('is-active');
+    el.btnTaskInfo.setAttribute('aria-expanded', 'false');
+    el.taskInfoPopover.style.transform = '';
+  }
+
+  function toggleTaskInfoPopover() {
+    if (!el.taskInfoPopover) return;
+    if (el.taskInfoPopover.classList.contains('hidden')) {
+      openTaskInfoPopover();
+    } else {
+      closeTaskInfoPopover();
+    }
+  }
+
+  function positionTaskInfoPopover() {
+    if (!el.taskInfoPopover || !el.btnTaskInfo) return;
+    if (el.taskInfoPopover.classList.contains('hidden')) return;
+
+    el.taskInfoPopover.style.right = '0';
+    el.taskInfoPopover.style.left = 'auto';
+    el.taskInfoPopover.style.top = 'calc(100% + 8px)';
+    el.taskInfoPopover.style.bottom = 'auto';
+    el.taskInfoPopover.style.transform = 'none';
+
+    var popRect = el.taskInfoPopover.getBoundingClientRect();
+    var wrapper = el.btnTaskInfo.parentElement || el.btnTaskInfo;
+    var wrapperRect = wrapper.getBoundingClientRect();
+    var container = el.detailsContent || document.body;
+    var containerRect = container.getBoundingClientRect();
+
+    var pad = 12;
+    var minLeft = Math.max(pad, containerRect.left + pad);
+    var maxRight = Math.min(window.innerWidth - pad, containerRect.right - pad);
+
+    // If popover overflows the left edge of container / viewport
+    if (popRect.left < minLeft) {
+      el.taskInfoPopover.style.right = 'auto';
+      el.taskInfoPopover.style.left = '0';
+      popRect = el.taskInfoPopover.getBoundingClientRect();
+
+      if (popRect.right > maxRight) {
+        var offset = maxRight - popRect.right;
+        el.taskInfoPopover.style.transform = 'translateX(' + offset + 'px)';
+      }
+    } else if (popRect.right > maxRight) {
+      var offset = maxRight - popRect.right;
+      el.taskInfoPopover.style.transform = 'translateX(' + offset + 'px)';
+    }
+
+    // Check bottom boundary
+    var popHeight = popRect.height || 180;
+    if (wrapperRect.bottom + popHeight + pad > window.innerHeight && wrapperRect.top > popHeight + pad) {
+      el.taskInfoPopover.style.top = 'auto';
+      el.taskInfoPopover.style.bottom = 'calc(100% + 8px)';
+    }
+  }
+
   function renderTaskDetails(isTaskSwitch) {
     if (!state.selectedTaskId) {
+      closeTaskInfoPopover();
       state.lastRenderedTaskId = null;
       el.detailsEmptyState.classList.remove('hidden');
       el.detailsContent.classList.add('hidden');
@@ -1727,11 +1806,16 @@
 
     var task = DataService.getTaskById(state.selectedTaskId);
     if (!task) {
+      closeTaskInfoPopover();
       state.selectedTaskId = null;
       state.lastRenderedTaskId = null;
       el.detailsEmptyState.classList.remove('hidden');
       el.detailsContent.classList.add('hidden');
       return;
+    }
+
+    if (isTaskSwitch || state.lastRenderedTaskId !== task.taskId) {
+      closeTaskInfoPopover();
     }
 
     el.detailsEmptyState.classList.add('hidden');
@@ -1861,17 +1945,7 @@
 
     el.detailCreatedAt.textContent = formatDateTime(task.createdAt);
 
-    if (task.description && task.description.trim()) {
-      el.detailDescription.textContent = task.description;
-      if (isKhmer(task.description)) {
-        el.detailDescription.setAttribute('lang', 'km');
-      } else {
-        el.detailDescription.removeAttribute('lang');
-      }
-    } else {
-      el.detailDescription.innerHTML = '<em>No description provided.</em>';
-      el.detailDescription.removeAttribute('lang');
-    }
+    renderTaskDescription(el.detailDescription, task.description);
 
     // Form controls management:
     // Only treat as different task if explicitly switched (isTaskSwitch === true)
@@ -2644,8 +2718,562 @@
     }
   }
 
+  // ==========================================================================
+  // SMART-PASTE & AIA CLAIM PARSER
+  // ==========================================================================
+  var smartPasteToastTimeout = null;
+
+  function isAiaClaimFormat(text) {
+    if (!text || typeof text !== 'string' || text.length < 50) return false;
+    var markers = [
+      /AIA BROKER/i,
+      /aiamedcare\.aia\.com\.kh/i,
+      /Reimbursement\s*-\s*#?AIA/i,
+      /Member\s*\/\s*Life Assured Details/i,
+      /Hospital\s*\/\s*Clinic Details/i,
+      /Claim Details/i,
+      /Comments on Need Information/i,
+      /Total Claim Amount Submitted/i
+    ];
+    var matches = 0;
+    for (var i = 0; i < markers.length; i++) {
+      if (markers[i].test(text)) matches++;
+    }
+    return matches >= 2;
+  }
+
+  function extractClaimNumber(text) {
+    var m = text.match(/Reimbursement\s*-\s*#?(AIA\d+)/i);
+    if (m && m[1]) return m[1];
+    var m2 = text.match(/#(AIA\d+)/i);
+    if (m2 && m2[1]) return m2[1];
+    var m3 = text.match(/\b(AIA\d+)\b/i);
+    if (m3 && m3[1]) return m3[1];
+    return '';
+  }
+
+  function cleanKhmerComments(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    var text = raw.trim();
+
+    // 1. Strip closing boilerplate starting from "សូមបញ្ជាក់ថា"
+    var closingIdx = text.indexOf('សូមបញ្ជាក់ថា');
+    if (closingIdx !== -1) {
+      text = text.substring(0, closingIdx).trim();
+    }
+
+    // 2. Strip opening boilerplate
+    if (text.indexOf('ជម្រាបសួរ') !== -1) {
+      var colonIdx = text.indexOf('៖');
+      if (colonIdx === -1) {
+        colonIdx = text.indexOf(':');
+      }
+      if (colonIdx !== -1 && colonIdx < 350) {
+        text = text.substring(colonIdx + 1).trim();
+      } else {
+        var bulletMatch = text.search(/[•\-\*]/);
+        if (bulletMatch !== -1 && text.indexOf('ជម្រាបសួរ') < bulletMatch) {
+          text = text.substring(bulletMatch).trim();
+        }
+      }
+    }
+
+    var literalOpener = 'ជម្រាបសួរអតិថិជនជាទីគោរព សូមមេត្តាជួយផ្តល់ឯកសារបន្ថែមដែលមានរាយដូចខាងក្រោមនេះ៖';
+    if (text.indexOf(literalOpener) === 0) {
+      text = text.substring(literalOpener.length).trim();
+    }
+
+    return text.trim();
+  }
+
+  function parseAiaClaim(text) {
+    if (!isAiaClaimFormat(text)) return null;
+
+    var lines = text.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 0; });
+
+    var knownLabels = [
+      'aia broker',
+      'reimbursement',
+      'member / life assured details',
+      'member / life assured number',
+      'name of insured',
+      'national id / passport / birth certificate',
+      'date of birth',
+      'phone number',
+      'phone number optional',
+      'agent name',
+      'agent phone number',
+      'hospital / clinic details',
+      'clinic name',
+      'country name',
+      'city name',
+      'address',
+      'claim details',
+      'treatment is related to',
+      'date of event',
+      'treatment type',
+      'treatment visit check-in',
+      'treatment visit check-out',
+      'reason for visit',
+      'total day(s) & hour(s)',
+      'icd code/name',
+      'invoice number',
+      'icd description',
+      'invoice date',
+      'total original claim amount submitted',
+      'disability category',
+      'original currency type selected',
+      'claim submitted by',
+      'claim submitted date',
+      'claim benefits',
+      'documents',
+      'proof of id card or passport',
+      'proof of insurance card',
+      'proof of other identity documents',
+      'invoice',
+      'medical certificate / discharged letter',
+      'other documents',
+      'result of laboratory & diagnostic test',
+      'send back note',
+      'send back date',
+      'reason for send back',
+      'comments on need information',
+      'total claim amount submitted'
+    ];
+
+    function isLabelLine(line) {
+      var lower = line.toLowerCase();
+      if (lower.indexOf('reimbursement -') === 0) return true;
+      if (lower.indexOf('[click to view document]') === 0) return true;
+      for (var i = 0; i < knownLabels.length; i++) {
+        if (lower === knownLabels[i]) return true;
+      }
+      return false;
+    }
+
+    function getValueAfter(labelRegex, startIdx, stopRegex) {
+      startIdx = startIdx || 0;
+      for (var i = startIdx; i < lines.length; i++) {
+        if (stopRegex && stopRegex.test(lines[i])) break;
+        if (labelRegex.test(lines[i])) {
+          if (i + 1 < lines.length) {
+            var nextLine = lines[i + 1];
+            if (!isLabelLine(nextLine) || labelRegex.test(nextLine)) {
+              return { value: nextLine, index: i + 1 };
+            }
+          }
+          return { value: '', index: i };
+        }
+      }
+      return { value: '', index: -1 };
+    }
+
+    function getMultiLineValueAfter(labelRegex, stopRegex) {
+      var collected = [];
+      var foundLabel = false;
+      for (var i = 0; i < lines.length; i++) {
+        if (!foundLabel) {
+          if (labelRegex.test(lines[i])) {
+            foundLabel = true;
+          }
+        } else {
+          if (stopRegex && stopRegex.test(lines[i])) break;
+          if (isLabelLine(lines[i])) break;
+          collected.push(lines[i]);
+        }
+      }
+      return collected.join('\n').trim();
+    }
+
+    // 1. Name of insured
+    var nameOfInsured = getValueAfter(/^name of insured$/i).value;
+
+    // 2. National ID / Passport
+    var nationalId = getValueAfter(/^national id \/ passport/i).value;
+
+    // 3. Date of Birth
+    var dob = getValueAfter(/^date of birth$/i).value;
+
+    // Find Hospital / Clinic Details section start
+    var clinicSectionIdx = 0;
+    for (var c = 0; c < lines.length; c++) {
+      if (/hospital\s*\/\s*clinic details/i.test(lines[c])) {
+        clinicSectionIdx = c;
+        break;
+      }
+    }
+
+    // 4. Clinic Name
+    var clinicNameObj = getValueAfter(/^clinic name$/i, clinicSectionIdx);
+    var clinicName = clinicNameObj.value;
+
+    // 5. Clinic Phone
+    var clinicPhone = '';
+    if (clinicNameObj.index !== -1) {
+      clinicPhone = getValueAfter(/^phone number$/i, clinicNameObj.index, /^claim details$/i).value;
+      if (clinicPhone.toLowerCase() === 'phone number optional') clinicPhone = '';
+    }
+
+    // 6. Address
+    var address = getValueAfter(/^address$/i, clinicSectionIdx, /^claim details$/i).value;
+
+    // 7. Treatment Related To
+    var treatmentRelatedTo = getValueAfter(/^treatment is related to$/i).value;
+
+    // 8. Date of Event
+    var dateOfEvent = getValueAfter(/^date of event$/i).value;
+
+    // 9. Treatment Type
+    var treatmentType = getValueAfter(/^treatment type$/i).value;
+
+    // 10. Check-in
+    var checkIn = getValueAfter(/^treatment visit check-in$/i).value;
+
+    // 11. Check-out
+    var checkOut = getValueAfter(/^treatment visit check-out$/i).value;
+
+    // 12. Claim Submitted Date
+    var claimSubmittedDate = getValueAfter(/^claim submitted date$/i).value;
+
+    // 13. Comments on Need Information (Khmer)
+    var rawKhmer = getMultiLineValueAfter(/^comments on need information$/i, /^total claim amount/i);
+    var khmerComments = cleanKhmerComments(rawKhmer);
+
+    // 14. Total Claim Amount
+    var totalClaimAmount = getValueAfter(/^total claim amount submitted$/i).value;
+    if (!totalClaimAmount) {
+      totalClaimAmount = getValueAfter(/^total original claim amount submitted$/i).value;
+    }
+
+    var claimNumber = extractClaimNumber(text);
+
+    var fields = [
+      { label: 'Name of insured', value: nameOfInsured },
+      { label: 'National ID / Passport', value: nationalId },
+      { label: 'Date of Birth', value: dob },
+      { label: 'Clinic Name', value: clinicName },
+      { label: 'Clinic Phone', value: clinicPhone },
+      { label: 'Address', value: address },
+      { label: 'Treatment Related To', value: treatmentRelatedTo },
+      { label: 'Date of Event', value: dateOfEvent },
+      { label: 'Treatment Type', value: treatmentType },
+      { label: 'Check-in', value: checkIn },
+      { label: 'Check-out', value: checkOut },
+      { label: 'Claim Submitted Date', value: claimSubmittedDate },
+      { label: 'Comments on Need Information', value: khmerComments },
+      { label: 'Total Claim Amount', value: totalClaimAmount }
+    ];
+
+    var extractedLines = [];
+    fields.forEach(function (f) {
+      if (f.value && f.value.trim()) {
+        extractedLines.push(f.label + ': ' + f.value.trim());
+      }
+    });
+
+    return {
+      claimNumber: claimNumber,
+      fields: fields,
+      formattedText: extractedLines.join('\n')
+    };
+  }
+
+  function showSmartPasteToast(msg) {
+    if (!el.smartPasteToast) return;
+    if (smartPasteToastTimeout) {
+      clearTimeout(smartPasteToastTimeout);
+      smartPasteToastTimeout = null;
+    }
+    if (el.smartPasteToastMsg) {
+      el.smartPasteToastMsg.textContent = msg || 'Format detected';
+    }
+    el.smartPasteToast.classList.remove('hidden');
+    void el.smartPasteToast.offsetWidth;
+    el.smartPasteToast.classList.add('is-visible');
+
+    smartPasteToastTimeout = setTimeout(function () {
+      if (el.smartPasteToast) {
+        el.smartPasteToast.classList.remove('is-visible');
+        setTimeout(function () {
+          if (el.smartPasteToast && !el.smartPasteToast.classList.contains('is-visible')) {
+            el.smartPasteToast.classList.add('hidden');
+          }
+        }, 220);
+      }
+    }, 2200);
+  }
+
+  function resetSmartPasteUI() {
+    state.originalPaste = null;
+    if (smartPasteToastTimeout) {
+      clearTimeout(smartPasteToastTimeout);
+      smartPasteToastTimeout = null;
+    }
+    if (el.smartPasteToast) {
+      el.smartPasteToast.classList.remove('is-visible');
+      el.smartPasteToast.classList.add('hidden');
+    }
+    if (el.btnToggleOriginalPaste) {
+      el.btnToggleOriginalPaste.classList.add('hidden');
+      el.btnToggleOriginalPaste.textContent = 'View original paste';
+    }
+    if (el.originalPasteBox) {
+      el.originalPasteBox.classList.add('hidden');
+    }
+    if (el.originalPasteContent) {
+      el.originalPasteContent.textContent = '';
+    }
+  }
+
+  function handleDescPaste(e) {
+    var pastedText = '';
+    if (e.clipboardData && e.clipboardData.getData) {
+      pastedText = e.clipboardData.getData('text/plain') || e.clipboardData.getData('text') || '';
+    } else if (window.clipboardData && window.clipboardData.getData) {
+      pastedText = window.clipboardData.getData('Text') || '';
+    }
+
+    if (!pastedText || !isAiaClaimFormat(pastedText)) {
+      return;
+    }
+
+    e.preventDefault();
+
+    // Store untouched original paste
+    state.originalPaste = pastedText;
+    if (el.originalPasteContent) {
+      el.originalPasteContent.textContent = pastedText;
+    }
+    if (el.btnToggleOriginalPaste) {
+      el.btnToggleOriginalPaste.classList.remove('hidden');
+      el.btnToggleOriginalPaste.textContent = 'View original paste';
+    }
+    if (el.originalPasteBox) {
+      el.originalPasteBox.classList.add('hidden');
+    }
+
+    // Extract fields
+    var parsed = parseAiaClaim(pastedText);
+    if (parsed) {
+      el.taskDescInput.value = parsed.formattedText;
+      el.taskDescInput.classList.remove('is-invalid');
+      if (el.taskDescError) el.taskDescError.textContent = '';
+
+      // Auto-fill Task Name if empty
+      if (el.taskNameInput && !el.taskNameInput.value.trim() && parsed.claimNumber) {
+        el.taskNameInput.value = parsed.claimNumber;
+        el.taskNameInput.classList.remove('is-invalid');
+        if (el.taskNameError) el.taskNameError.textContent = '';
+        el.taskNameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      el.taskDescInput.dispatchEvent(new Event('input', { bubbles: true }));
+      showSmartPasteToast('Format detected');
+    }
+  }
+
+  function handleToggleOriginalPaste() {
+    if (!el.originalPasteBox || !el.btnToggleOriginalPaste) return;
+    var isHidden = el.originalPasteBox.classList.contains('hidden');
+    if (isHidden) {
+      el.originalPasteBox.classList.remove('hidden');
+      el.btnToggleOriginalPaste.textContent = 'Hide original paste';
+    } else {
+      el.originalPasteBox.classList.add('hidden');
+      el.btnToggleOriginalPaste.textContent = 'View original paste';
+    }
+  }
+
+  function handleCloseOriginalPaste() {
+    if (el.originalPasteBox) {
+      el.originalPasteBox.classList.add('hidden');
+    }
+    if (el.btnToggleOriginalPaste) {
+      el.btnToggleOriginalPaste.textContent = 'View original paste';
+    }
+  }
+
+  function renderTaskDescription(container, desc) {
+    if (!container) return;
+    if (!desc || !desc.trim()) {
+      container.innerHTML = '<em>No description provided.</em>';
+      container.removeAttribute('lang');
+      return;
+    }
+
+    var raw = desc.trim();
+    var lines = raw.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 0; });
+    var labelValueMatches = 0;
+    var parsedLines = [];
+    var lineRegex = /^([^:\n]{2,45}):\s*(.+)$/;
+
+    for (var i = 0; i < lines.length; i++) {
+      var match = lines[i].match(lineRegex);
+      if (match) {
+        labelValueMatches++;
+        parsedLines.push({ label: match[1].trim(), value: match[2].trim() });
+      } else {
+        parsedLines.push({ label: null, value: lines[i] });
+      }
+    }
+
+    if (labelValueMatches >= 3 && labelValueMatches >= lines.length * 0.6) {
+      container.innerHTML = '';
+      var card = document.createElement('div');
+      card.className = 'claim-detail-card';
+
+      var CLAIM_PAIRS = [
+        { field1: 'Name of insured', field2: 'National ID / Passport', maxLen1: 30, maxLen2: 30 },
+        { field1: 'Date of Birth', field2: 'Clinic Phone', maxLen1: 28, maxLen2: 28 },
+        { field1: 'Clinic Name', field2: 'Address', maxLen1: 28, maxLen2: 28 },
+        { field1: 'Treatment Related To', field2: 'Treatment Type', maxLen1: 28, maxLen2: 28 },
+        { field1: 'Date of Event', field2: 'Claim Submitted Date', maxLen1: 28, maxLen2: 28 },
+        { field1: 'Check-in', field2: 'Check-out', maxLen1: 28, maxLen2: 28 }
+      ];
+
+      var map = {};
+      parsedLines.forEach(function (item) {
+        if (item.label && item.label.toLowerCase() === 'comments on need information (khmer)') {
+          item.label = 'Comments on Need Information';
+        }
+        if (item.label) {
+          map[item.label.toLowerCase()] = item;
+        }
+      });
+
+      function isBoldLabel(label) {
+        if (!label) return false;
+        var l = label.trim().toLowerCase();
+        return l === 'name of insured' || l === 'date of event' || l === 'comments on need information';
+      }
+
+      function isTotalAmount(label) {
+        if (!label) return false;
+        return label.trim().toLowerCase() === 'total claim amount';
+      }
+
+      var pairedRows = [];
+      var used = new Set();
+
+      CLAIM_PAIRS.forEach(function (pair) {
+        var it1 = map[pair.field1.toLowerCase()];
+        var it2 = map[pair.field2.toLowerCase()];
+        if (it1 && it2 && !used.has(it1) && !used.has(it2)) {
+          var len1 = it1.value ? it1.value.length : 0;
+          var len2 = it2.value ? it2.value.length : 0;
+          var isShort1 = len1 <= (pair.maxLen1 || 28);
+          var isShort2 = len2 <= (pair.maxLen2 || 28);
+          if (isShort1 && isShort2) {
+            pairedRows.push({ type: 'pair', col1: it1, col2: it2 });
+            used.add(it1);
+            used.add(it2);
+          }
+        }
+      });
+
+      function createFieldCol(item) {
+        var col = document.createElement('div');
+        col.className = 'claim-field-col';
+
+        var labelSpan = document.createElement('span');
+        labelSpan.className = 'claim-field-label';
+        labelSpan.textContent = item.label;
+        if (isBoldLabel(item.label)) {
+          labelSpan.classList.add('is-bold');
+        }
+
+        var valSpan = document.createElement('span');
+        valSpan.className = 'claim-field-value';
+        valSpan.textContent = item.value;
+        if (isKhmer(item.value)) {
+          valSpan.setAttribute('lang', 'km');
+        }
+
+        if (isTotalAmount(item.label)) {
+          col.classList.add('is-total-amount');
+          labelSpan.classList.add('is-total-amount');
+          valSpan.classList.add('is-total-amount');
+        }
+
+        col.appendChild(labelSpan);
+        col.appendChild(valSpan);
+        return col;
+      }
+
+      var processedItems = new Set();
+
+      parsedLines.forEach(function (item) {
+        if (!item.label) {
+          var p = document.createElement('div');
+          p.className = 'claim-field-text';
+          p.textContent = item.value;
+          if (isKhmer(item.value)) {
+            p.setAttribute('lang', 'km');
+          }
+          card.appendChild(p);
+          return;
+        }
+
+        if (processedItems.has(item)) return;
+
+        var formedPair = pairedRows.find(function (r) {
+          return r.type === 'pair' && (r.col1 === item || r.col2 === item);
+        });
+
+        if (formedPair) {
+          var gridRow = document.createElement('div');
+          gridRow.className = 'claim-grid-row';
+          gridRow.appendChild(createFieldCol(formedPair.col1));
+          gridRow.appendChild(createFieldCol(formedPair.col2));
+          card.appendChild(gridRow);
+          processedItems.add(formedPair.col1);
+          processedItems.add(formedPair.col2);
+        } else {
+          var singleRow = document.createElement('div');
+          singleRow.className = 'claim-field-row';
+
+          var labelSpan = document.createElement('span');
+          labelSpan.className = 'claim-field-label';
+          labelSpan.textContent = item.label;
+          if (isBoldLabel(item.label)) {
+            labelSpan.classList.add('is-bold');
+          }
+
+          var valSpan = document.createElement('span');
+          valSpan.className = 'claim-field-value';
+          valSpan.textContent = item.value;
+          if (isKhmer(item.value)) {
+            valSpan.setAttribute('lang', 'km');
+          }
+
+          if (isTotalAmount(item.label)) {
+            singleRow.classList.add('is-total-amount');
+            labelSpan.classList.add('is-total-amount');
+            valSpan.classList.add('is-total-amount');
+          }
+
+          singleRow.appendChild(labelSpan);
+          singleRow.appendChild(valSpan);
+          card.appendChild(singleRow);
+          processedItems.add(item);
+        }
+      });
+
+      container.appendChild(card);
+      container.removeAttribute('lang');
+    } else {
+      container.textContent = raw;
+      if (isKhmer(raw)) {
+        container.setAttribute('lang', 'km');
+      } else {
+        container.removeAttribute('lang');
+      }
+    }
+  }
+
   function openNewTaskModal() {
     state.editingTaskId = null;
+    resetSmartPasteUI();
     el.newTaskForm.reset();
     el.taskNameError.textContent = '';
     el.taskAssigneeError.textContent = '';
@@ -2723,6 +3351,7 @@
     if (!isCreator) return;
 
     state.editingTaskId = task.taskId;
+    resetSmartPasteUI();
     el.newTaskForm.reset();
     el.taskNameError.textContent = '';
     el.taskAssigneeError.textContent = '';
@@ -2814,6 +3443,7 @@
 
   function closeNewTaskModal() {
     el.newTaskModal.classList.add('hidden');
+    resetSmartPasteUI();
     state.modalAssigneePrevious = null;
     state.editingTaskId = null;
     if (el.taskEditStatusGroup) el.taskEditStatusGroup.classList.add('hidden');
@@ -3243,7 +3873,11 @@
 
       // Escape
       if (e.key === 'Escape') {
-        if (el.disclaimerModal && !el.disclaimerModal.classList.contains('hidden')) {
+        if (el.taskInfoPopover && !el.taskInfoPopover.classList.contains('hidden')) {
+          closeTaskInfoPopover();
+          e.preventDefault();
+          return;
+        } else if (el.disclaimerModal && !el.disclaimerModal.classList.contains('hidden')) {
           closeDisclaimerModal();
           e.preventDefault();
           return;
@@ -3438,6 +4072,38 @@
       }
     });
 
+    // Task Info Popover events
+    if (el.btnTaskInfo) {
+      el.btnTaskInfo.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTaskInfoPopover();
+      });
+    }
+
+    if (el.btnCloseTaskInfo) {
+      el.btnCloseTaskInfo.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTaskInfoPopover();
+      });
+    }
+
+    // Close popover on outside click
+    document.addEventListener('click', function (e) {
+      if (el.taskInfoPopover && !el.taskInfoPopover.classList.contains('hidden')) {
+        if (!el.btnTaskInfo.contains(e.target) && !el.taskInfoPopover.contains(e.target)) {
+          closeTaskInfoPopover();
+        }
+      }
+    });
+
+    window.addEventListener('resize', function () {
+      if (el.taskInfoPopover && !el.taskInfoPopover.classList.contains('hidden')) {
+        positionTaskInfoPopover();
+      }
+    });
+
     // Confirm / Alert Modal events
     if (el.btnCloseConfirmModal) {
       el.btnCloseConfirmModal.addEventListener('click', function () {
@@ -3519,6 +4185,17 @@
     el.btnCloseModal.addEventListener('click', closeNewTaskModal);
     el.btnCancelModal.addEventListener('click', closeNewTaskModal);
     el.newTaskForm.addEventListener('submit', handleCreateTaskSubmit);
+
+    // Smart-paste controls
+    if (el.taskDescInput) {
+      el.taskDescInput.addEventListener('paste', handleDescPaste);
+    }
+    if (el.btnToggleOriginalPaste) {
+      el.btnToggleOriginalPaste.addEventListener('click', handleToggleOriginalPaste);
+    }
+    if (el.btnCloseOriginalPaste) {
+      el.btnCloseOriginalPaste.addEventListener('click', handleCloseOriginalPaste);
+    }
 
     function handleTaskAssigneeChange() {
       if (!el.taskAssigneeInput || !el.taskShareTeamInput) return;
