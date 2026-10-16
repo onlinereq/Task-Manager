@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Hanuman:wght@400;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="style.css?v=2.5">
+  <link rel="stylesheet" href="style.css?v=3.1">
 </head>
 <body>
   <!-- Clean Login Screen -->
@@ -361,39 +361,60 @@
         <div class="panel-content details-scroll-area">
           <div class="details-hero">
             <span class="detail-task-code" id="detail-task-code" title="Task Code">-</span>
-            <h1 class="details-task-name" id="detail-task-name">-</h1>
-          </div>
-
-          <div class="meta-card">
-            <div class="meta-grid">
-              <div class="meta-item">
-                <span class="meta-label">Assignee</span>
-                <div class="meta-value" id="detail-assignee">
-                  <span id="detail-assignee-name">-</span>
-                </div>
-              </div>
-
-              <div class="meta-item">
-                <span class="meta-label">Deadline</span>
-                <div class="meta-value" id="detail-deadline-wrapper">
-                  <svg class="icon meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                    <line x1="16" y1="2" x2="16" y2="6"/>
-                    <line x1="8" y1="2" x2="8" y2="6"/>
-                    <line x1="3" y1="10" x2="21" y2="10"/>
+            <div class="details-hero-title-row">
+              <h1 class="details-task-name" id="detail-task-name">-</h1>
+              <div class="task-info-popup-wrapper">
+                <button type="button" class="btn-task-info" id="btn-task-info" aria-label="Task metadata" aria-haspopup="dialog" aria-expanded="false" title="View task metadata">
+                  <svg class="icon icon-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 11.5v5m-1.5 0h3m-1.5-5h-.75"/>
+                    <circle cx="12" cy="7.25" r="1.3" fill="currentColor" stroke="none"/>
                   </svg>
-                  <span id="detail-deadline-text">-</span>
+                </button>
+                <div class="task-info-popover hidden" id="task-info-popover" role="dialog" aria-labelledby="task-info-popover-title">
+                  <div class="task-info-popover-header">
+                    <span class="task-info-popover-title" id="task-info-popover-title">Task Details</span>
+                    <button type="button" class="btn-close-popover" id="btn-close-task-info" aria-label="Close task details">
+                      <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <div class="task-info-popover-body">
+                    <div class="meta-grid">
+                      <div class="meta-item">
+                        <span class="meta-label">Assignee</span>
+                        <div class="meta-value" id="detail-assignee">
+                          <span id="detail-assignee-name">-</span>
+                        </div>
+                      </div>
+
+                      <div class="meta-item">
+                        <span class="meta-label">Deadline</span>
+                        <div class="meta-value" id="detail-deadline-wrapper">
+                          <svg class="icon meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                            <line x1="16" y1="2" x2="16" y2="6"/>
+                            <line x1="8" y1="2" x2="8" y2="6"/>
+                            <line x1="3" y1="10" x2="21" y2="10"/>
+                          </svg>
+                          <span id="detail-deadline-text">-</span>
+                        </div>
+                      </div>
+
+                      <div class="meta-item">
+                        <span class="meta-label">Created By</span>
+                        <div class="meta-value" id="detail-created-by">-</div>
+                      </div>
+
+                      <div class="meta-item">
+                        <span class="meta-label">Created At</span>
+                        <div class="meta-value" id="detail-created-at">-</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              <div class="meta-item">
-                <span class="meta-label">Created By</span>
-                <div class="meta-value" id="detail-created-by">-</div>
-              </div>
-
-              <div class="meta-item">
-                <span class="meta-label">Created At</span>
-                <div class="meta-value" id="detail-created-at">-</div>
               </div>
             </div>
           </div>
@@ -506,11 +527,31 @@
             </select>
           </div>
 
-          <div class="form-group">
-            <label for="task-desc-input">
-              Description <span class="required-star">*</span>
-            </label>
-            <textarea id="task-desc-input" class="form-input form-textarea" rows="4" placeholder="Add specific objectives, deliverables, or relevant notes..." required></textarea>
+          <div class="form-group smart-paste-group">
+            <div class="form-label-row">
+              <label for="task-desc-input">
+                Description <span class="required-star">*</span>
+              </label>
+              <button type="button" class="btn-toggle-original-paste hidden" id="btn-toggle-original-paste">
+                View original paste
+              </button>
+            </div>
+            <div class="textarea-relative-wrapper">
+              <textarea id="task-desc-input" class="form-input form-textarea" rows="4" placeholder="Add specific objectives, deliverables, or relevant notes..." required></textarea>
+              <div id="smart-paste-toast" class="smart-paste-toast hidden" role="status" aria-live="polite">
+                <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                <span id="smart-paste-toast-msg">Format detected</span>
+              </div>
+            </div>
+            <div id="original-paste-box" class="original-paste-box hidden">
+              <div class="original-paste-header">
+                <span class="original-paste-title">Original Raw Paste</span>
+                <button type="button" class="btn-close-original-paste" id="btn-close-original-paste">Hide</button>
+              </div>
+              <pre id="original-paste-content" class="original-paste-content"></pre>
+            </div>
             <span class="field-error" id="task-desc-error"></span>
           </div>
 
@@ -662,6 +703,6 @@
   </div>
 
   <script src="config.js" defer></script>
-  <script src="app.js?v=4.4" defer></script>
+  <script src="app.js?v=5.0" defer></script>
 </body>
 </html>
