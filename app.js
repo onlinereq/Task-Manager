@@ -1171,7 +1171,7 @@
     } else if (status === 'syncing') {
       el.syncStatusText.textContent = 'Syncing…';
     } else if (status === 'error') {
-      el.syncStatusText.textContent = "Couldn't Sync";
+      el.syncStatusText.textContent = 'Reconnecting…';
     } else {
       el.syncStatusText.textContent = 'Synced';
     }
