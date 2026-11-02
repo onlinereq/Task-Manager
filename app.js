@@ -1673,36 +1673,73 @@
         ? `<span class="task-age-badge" lang="en" title="Created: ${sanitize(formatDateTime(task.createdAt))}">${daysText}</span>`
         : '';
 
+      var ageMatch = daysText ? daysText.match(/^(\d+)/) : null;
+      var ageDays = ageMatch ? parseInt(ageMatch[1], 10) : null;
+      var createdTag = ageDays === null ? '' :
+        `<span class="task-created-age" title="Created: ${sanitize(formatDateTime(task.createdAt))}">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+          <span lang="en">${ageDays === 0 ? 'Created today' : 'Created ' + ageDays + 'd ago'}</span>
+        </span>`;
+
+      // Compact due date for the row: year only when it is not the current year
+      var dueShort = formatDate(task.deadline);
+      if (task.deadline) {
+        var dsStr = String(task.deadline);
+        var dsDate = new Date(dsStr.includes('T') ? dsStr : dsStr + 'T00:00:00');
+        if (!isNaN(dsDate.getTime())) {
+          var dsOpts = { month: 'short', day: 'numeric' };
+          if (dsDate.getFullYear() !== new Date().getFullYear()) dsOpts.year = 'numeric';
+          dueShort = dsDate.toLocaleDateString('en-US', dsOpts);
+        }
+      }
+
+      var lateText = '';
+      if (overdue && task.deadline) {
+        var dlStr = String(task.deadline);
+        var dl = new Date(dlStr.includes('T') ? dlStr : dlStr + 'T00:00:00');
+        var todayMid = new Date();
+        todayMid.setHours(0, 0, 0, 0);
+        var lateDays = Math.round((todayMid.getTime() - dl.getTime()) / 86400000);
+        if (lateDays > 0) lateText = ' · ' + lateDays + 'd late';
+      }
+
       var row = document.createElement('div');
-      row.className = 'task-item-row' + (isSelected ? ' selected' : '');
+      // Active task created by someone else and assigned to the signed-in user
+      var meName = (state.currentUser && state.currentUser.name ? state.currentUser.name : '').trim().toLowerCase();
+      var assignedByOther = meName &&
+        (task.state || 'Active') === 'Active' &&
+        String(task.assignedTo || '').trim().toLowerCase() === meName &&
+        String(task.createdBy || '').trim().toLowerCase() !== meName;
+      row.className = 'task-item-row' + (isSelected ? ' selected' : '') + (assignedByOther ? ' assigned-by-other' : '');
       row.dataset.taskId = task.taskId;
       row.tabIndex = 0;
 
       row.innerHTML = `
         <div class="task-row-top">
           <h3 class="task-row-title"${nameLang}>
-            ${daysBadge}${displayName}
+            ${displayName}
             ${matchTag}
           </h3>
           <div class="task-row-badges">
             ${task.isPrivate ? '<span class="privacy-badge" title="Visible only to you"><svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="0" ry="0"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span>Only Me</span></span>' : ''}
-            <span class="status-badge ${statusMeta.className}${lastClass}">${sanitize(task.status)}</span>
           </div>
         </div>
         <div class="task-row-bottom">
+          <span class="status-badge ${statusMeta.className}${lastClass}">${sanitize(task.status)}</span>
           <span class="task-assignee-chip">
             <span${assigneeLang}>${displayAssignee}</span>
           </span>
           <div class="task-row-meta-right">
-            <span class="task-deadline ${overdue ? 'is-overdue' : ''}">
+            <span class="task-deadline ${overdue ? 'is-overdue' : ''}"${overdue ? ' title="Overdue"' : ''}>
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                 <line x1="16" y1="2" x2="16" y2="6"/>
                 <line x1="8" y1="2" x2="8" y2="6"/>
                 <line x1="3" y1="10" x2="21" y2="10"/>
               </svg>
-              <span>${sanitize(formatDate(task.deadline))}${overdue ? ' (Overdue)' : ''}</span>
+              <span>Due ${sanitize(dueShort)}${lateText}</span>
             </span>
+            ${createdTag}
           </div>
         </div>
       `;
@@ -1895,6 +1932,7 @@
         <span>Active</span>
       `;
       el.btnMarkComplete.title = 'Reopen task as Active';
+      el.btnMarkComplete.classList.remove('is-mark-complete');
 
       if (el.btnRestoreTask) el.btnRestoreTask.classList.add('hidden');
       if (el.btnDeleteTask) {
@@ -1907,9 +1945,10 @@
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="20 6 9 17 4 12"/>
         </svg>
-        <span>Complete</span>
+        <span>Mark as complete</span>
       `;
       el.btnMarkComplete.title = 'Mark task completed';
+      el.btnMarkComplete.classList.add('is-mark-complete');
 
       if (el.btnRestoreTask) el.btnRestoreTask.classList.add('hidden');
       if (el.btnDeleteTask) {
@@ -1934,6 +1973,13 @@
     } else {
       el.detailDeadlineText.style.color = '';
       el.detailDeadlineText.style.fontWeight = '';
+    }
+
+    var inlineDeadline = document.getElementById('detail-deadline-inline');
+    var inlineDeadlineText = document.getElementById('detail-deadline-inline-text');
+    if (inlineDeadline && inlineDeadlineText) {
+      inlineDeadlineText.textContent = formatDate(task.deadline) + (overdue ? ' (Overdue)' : '');
+      inlineDeadline.classList.toggle('is-overdue', !!overdue);
     }
 
     el.detailCreatedBy.textContent = task.createdBy || '-';
