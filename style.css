@@ -2252,7 +2252,8 @@ kbd, .kbd-shortcut, .btn-kbd, .search-kbd {
 }
 
 .sync-indicator.error .sync-dot {
-  background-color: #ff3b30;
+  background-color: #f59e0b;
+  animation: pulseSyncDot 700ms infinite alternate;
 }
 
 @keyframes pulseSyncDot {
