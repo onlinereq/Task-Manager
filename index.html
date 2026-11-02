@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Hanuman:wght@400;700&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="style.css?v=3.1">
+  <link rel="stylesheet" href="style.css?v=4.8">
 </head>
 <body>
   <!-- Clean Login Screen -->
@@ -39,7 +39,7 @@
 
         <div class="form-group">
           <label for="password">PIN Code</label>
-          <input type="password" name="password" id="password" class="form-input" placeholder="Enter your PIN" required autocomplete="current-password" inputmode="numeric">
+          <input type="password" name="password" id="password" class="form-input" placeholder="Enter your PIN" required autocomplete="current-password" inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false">
           <span class="field-error" id="login-pin-error"></span>
         </div>
 
@@ -334,12 +334,12 @@
             </div>
           </div>
           <div class="details-header-actions">
-            <button type="button" class="btn btn-secondary btn-sm" id="btn-mark-complete" title="Mark task completed">
+            <button type="button" class="btn btn-secondary btn-sm is-mark-complete" id="btn-mark-complete" title="Mark task completed">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                 <polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
-              <span>Complete</span>
+              <span>Mark as complete</span>
             </button>
             <button type="button" class="btn btn-secondary btn-sm hidden" id="btn-restore-task" title="Restore task to Active">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -363,6 +363,16 @@
             <span class="detail-task-code" id="detail-task-code" title="Task Code">-</span>
             <div class="details-hero-title-row">
               <h1 class="details-task-name" id="detail-task-name">-</h1>
+              <div class="details-hero-meta">
+              <span class="detail-deadline-inline" id="detail-deadline-inline" title="Deadline">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                  <line x1="16" y1="2" x2="16" y2="6"/>
+                  <line x1="8" y1="2" x2="8" y2="6"/>
+                  <line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+                <span id="detail-deadline-inline-text">-</span>
+              </span>
               <div class="task-info-popup-wrapper">
                 <button type="button" class="btn-task-info" id="btn-task-info" aria-label="Task metadata" aria-haspopup="dialog" aria-expanded="false" title="View task metadata">
                   <svg class="icon icon-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -390,7 +400,7 @@
                         </div>
                       </div>
 
-                      <div class="meta-item">
+                      <div class="meta-item hidden">
                         <span class="meta-label">Deadline</span>
                         <div class="meta-value" id="detail-deadline-wrapper">
                           <svg class="icon meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -415,6 +425,7 @@
                     </div>
                   </div>
                 </div>
+              </div>
               </div>
             </div>
           </div>
@@ -702,7 +713,7 @@
     </div>
   </div>
 
-  <script src="config.js" defer></script>
-  <script src="app.js?v=5.0" defer></script>
+  <script src="config.js?v=1.4.0" defer></script>
+  <script src="app.js?v=5.5" defer></script>
 </body>
 </html>
